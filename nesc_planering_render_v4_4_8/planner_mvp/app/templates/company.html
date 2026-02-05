@@ -1,0 +1,101 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Företag</title>
+  <link rel="stylesheet" href="/static/css/app.css"/>
+</head>
+<body>
+{% include "partials_topbar.html" %}
+<div class="container">
+  <div class="pagehead">
+    <div>
+      <h1>{{ company.name }} – Företagsinställningar</h1>
+      <div class="muted">Basregler: {{company.work_start}}–{{company.work_end}} (mån–fre). Enheter här följer med i alla projekt.</div>
+    </div>
+  </div>
+
+  {% if err == "unit_in_use" %}
+    <div class="badge danger" style="margin: 8px 0 14px 0;">
+      Kan inte ta bort enheten: den används i ett eller flera projekt (scope-rader).
+    </div>
+  {% endif %}
+
+  <div class="grid2">
+    <div class="card">
+      <h2>Medlemmar</h2>
+
+      <div class="list">
+        {% for m in members %}
+          {% set u = users.get(m.user_id) %}
+          <div class="row" style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+            <div>
+              <div><strong>{{ u.name if u else ("User "+m.user_id|string) }}</strong> <span class="muted">({{m.role_in_company}})</span></div>
+              <div class="muted">{{ u.email if u else "" }}</div>
+            </div>
+
+            {% if is_admin %}
+              <form method="post" action="/company/members/{{m.id}}/delete"
+                    onsubmit="return confirm('Ta bort personen? Detta tar bort personens planering, frånvaro och allokeringar i företaget.');">
+                <button class="btn danger mini" type="submit">Ta bort</button>
+              </form>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+
+      {% if is_admin %}
+        <div class="sep"></div>
+        <h3>Lägg till person</h3>
+        <form method="post" action="/company/members/add" class="grid3">
+          <input name="name" placeholder="Namn" required/>
+          <input name="email" placeholder="E-post" required/>
+          <select name="role_in_company">
+            <option value="employee">employee</option>
+            <option value="planner">planner</option>
+            <option value="admin">admin</option>
+            <option value="external">external</option>
+          </select>
+          <button class="btn primary" type="submit">Lägg till</button>
+        </form>
+      {% else %}
+        <p class="muted">Endast admin kan lägga till/ta bort personer.</p>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h2>Enhetskatalog</h2>
+      <table class="table">
+        <thead><tr><th>Namn</th><th>Min/enhet</th><th></th></tr></thead>
+        <tbody>
+          {% for u in units %}
+            <tr>
+              <td>{{u.name}}</td>
+              <td>{{u.default_minutes}}</td>
+              <td style="text-align:right;">
+                {% if is_admin %}
+                  <form method="post" action="/company/units/{{u.id}}/delete" onsubmit="return confirm('Ta bort enheten ur katalogen?');">
+                    <button class="btn danger mini" type="submit">Ta bort</button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      {% if is_admin %}
+        <h3>Lägg till enhet</h3>
+        <form method="post" action="/company/units/add" class="grid3">
+          <input name="name" placeholder="Namn" required/>
+          <input name="minutes" type="number" placeholder="Minuter/enhet" required/>
+          <button class="btn primary" type="submit">Lägg till</button>
+        </form>
+      {% else %}
+        <p class="muted">Endast admin kan lägga till/ta bort enheter.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+</body>
+</html>

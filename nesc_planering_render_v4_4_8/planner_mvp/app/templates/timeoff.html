@@ -1,0 +1,95 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Frånvaro</title>
+  <link rel="stylesheet" href="/static/css/app.css"/>
+</head>
+<body>
+{% include "partials_topbar.html" %}
+
+<div class="container narrow">
+  <div class="pagehead">
+    <div>
+      <h1>Frånvaro</h1>
+      <div class="muted">Adminvy: lägg till eller ta bort frånvaro på personer.</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="h2">Lägg till frånvaro</div>
+    <form method="post" action="/timeoff/new">
+      <label>Person</label>
+      <select name="person_id">
+        {% for person in people %}
+          {% set uname = users.get(person.user_id).name if users.get(person.user_id) else ("User "+person.user_id|string) %}
+          <option value="{{person.id}}">{{uname}}</option>
+        {% endfor %}
+      </select>
+
+      <div class="grid2">
+        <div>
+          <label>Start</label>
+          <input name="start" type="datetime-local" step="900" required/>
+        </div>
+        <div>
+          <label>Slut</label>
+          <input name="end" type="datetime-local" step="900" required/>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div>
+          <label>Typ</label>
+          <select name="kind">
+            <option value="leave">leave</option>
+            <option value="sick">sick</option>
+            <option value="other">other</option>
+          </select>
+        </div>
+        <div>
+          <label>Notering</label>
+          <input name="note" placeholder="t.ex. Semester"/>
+        </div>
+      </div>
+
+      <button type="submit">Spara</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <div class="h2">Lista</div>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Person</th>
+          <th>Start</th>
+          <th>Slut</th>
+          <th>Typ</th>
+          <th>Notering</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for o in offs %}
+          {% set person = (people|selectattr("id","equalto",o.person_id)|list)[0] %}
+          {% set uname = users.get(person.user_id).name if users.get(person.user_id) else ("User "+person.user_id|string) %}
+          <tr>
+            <td>{{uname}}</td>
+            <td>{{o.start.isoformat(sep=" ", timespec="minutes")}}</td>
+            <td>{{o.end.isoformat(sep=" ", timespec="minutes")}}</td>
+            <td>{{o.kind}}</td>
+            <td>{{o.note}}</td>
+            <td style="text-align:right;">
+              <form method="post" action="/timeoff/{{o.id}}/delete" onsubmit="return confirm('Ta bort frånvaro?');">
+                <button type="submit" class="btn danger mini">Ta bort</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+</body>
+</html>
