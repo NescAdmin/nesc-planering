@@ -1,0 +1,125 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Planera enheter – {{project.name}}</title>
+  <link rel="stylesheet" href="/static/css/app.css"/>
+</head>
+<body>
+{% include "partials_topbar.html" %}
+<div class="container">
+  <div class="pagehead">
+    <div>
+      <h1>Planera enheter – {{project.name}}</h1>
+      <div class="muted">Lägg ut enheter (t.ex. Väggar) på personer över tid. Skapar en lång bar över vald period.</div>
+      <div style="margin-top:10px; display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+        <a class="btn" href="/projects/{{project.id}}">Tillbaka</a>
+        <div class="pill">Scope: {{(totals.scope//60)}}h</div>
+        <div class="pill">Planerat: {{(totals.planned//60)}}h</div>
+        {% if totals.over > 0 %}
+          <div class="pill danger">Överskridet: +{{(totals.over//60)}}h</div>
+        {% else %}
+          <div class="pill ok">Kvar: {{((totals.scope-totals.planned)//60)}}h</div>
+        {% endif %}
+      </div>
+    </div>
+    <div class="viewtabs">
+      <a class="tab {% if view=='day' %}active{% endif %}" href="/projects/{{project.id}}/units?view=day&ref={{ref}}{% if selected_person_id %}&person={{selected_person_id}}{% endif %}">Dag</a>
+      <a class="tab {% if view=='week' %}active{% endif %}" href="/projects/{{project.id}}/units?view=week&ref={{ref}}{% if selected_person_id %}&person={{selected_person_id}}{% endif %}">Vecka</a>
+      <a class="tab {% if view=='month' %}active{% endif %}" href="/projects/{{project.id}}/units?view=month&ref={{ref}}{% if selected_person_id %}&person={{selected_person_id}}{% endif %}">Månad</a>
+    </div>
+  </div>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="card">
+        <div class="card-title">Personer</div>
+        <div class="list">
+          <a class="list-item {% if not selected_person_id %}active{% endif %}" href="/projects/{{project.id}}/units?view={{view}}&ref={{ref}}">Alla</a>
+          {% for p in people_all %}
+            <a class="list-item {% if selected_person_id==p.id %}active{% endif %}" href="/projects/{{project.id}}/units?view={{view}}&ref={{ref}}&person={{p.id}}">
+              {{users[p.user_id].name}}
+            </a>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Enheter i projektet</div>
+        <div class="muted" style="margin-bottom:8px">Välj en enhetstyp, markera en period i raden och ange antal.</div>
+        <div class="list" id="wiList">
+          {% for wi in workitems %}
+            {% set used = ua_by_wi.get(wi.id,0) %}
+            {% set remaining = wi.quantity - used %}
+            <div class="list-item unit-item" draggable="true" data-workitem-id="{{wi.id}}">
+              <div style="display:flex; justify-content:space-between; gap:10px; width:100%">
+                <div><b>{{wi.title}}</b></div>
+                <div class="muted">{{remaining}} kvar</div>
+              </div>
+              <div class="muted">{{wi.quantity}} st × {{wi.minutes_per_unit}} min ({{wi.total_minutes//60}}h)</div>
+              {% if remaining < 0 %}
+                <div class="badge danger">Överplanerad med {{-remaining}} st</div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="panel" style="padding:0">
+        <div class="portfolio-timeline">
+          <div class="pt-head pt-person">Person</div>
+          <div class="pt-head pt-axis">
+            <div class="pt-axis-grid" style="grid-template-columns: repeat({{periods|length}}, 1fr);">
+              {% for per in periods %}
+                <div class="pt-axis-cell">{{per.label}}</div>
+              {% endfor %}
+            </div>
+          </div>
+
+          {% for p in people %}
+            <div class="pt-person-cell">
+              <div class="who">{{users[p.user_id].name}}</div>
+            </div>
+            <div class="pt-row" style="--pt-lanes: {{timeline_lanes.get(p.id,1)}};">
+              <div class="pt-bg" style="grid-template-columns: repeat({{periods|length}}, 1fr);">
+                {% for per in periods %}
+                  <div class="pt-cell" data-person-id="{{p.id}}" data-period-start="{{per.start.isoformat()}}" data-period-end="{{per.end.isoformat()}}" data-project-id="{{project.id}}"></div>
+                {% endfor %}
+              </div>
+
+              <div class="pt-bars" style="grid-template-columns: repeat({{periods|length}}, 1fr);">
+                {% for seg in timeline_segments.get(p.id, []) %}
+                  <div class="pt-alloc"
+                       data-unitalloc-id="{{seg.id}}"
+                       data-person-id="{{p.id}}"
+                       data-workitem-id="{{seg.work_item_id}}"
+                       data-start-pi="{{seg.start_pi}}"
+                       data-end-pi="{{seg.end_pi}}"
+                       style="grid-column: {{seg.start_pi+1}} / {{seg.end_pi+2}}; margin-top: {{seg.lane * 26}}px; background: {{project.color}};">
+                    <span class="alloc-label">
+                      {{workitems_by_id[seg.work_item_id].title}} ×{{seg.quantity}}
+                    </span>
+                    <span class="resize-handle left" data-handle="left"></span>
+                    <span class="resize-handle right" data-handle="right"></span>
+                  </div>
+                {% endfor %}
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<script>
+window.__project = {id: {{project.id}} };
+window.__workitems = {{ workitems|tojson }};
+window.__people = {{ people_all|tojson }};
+window.__periods = {{ periods|tojson }};
+</script>
+<script src="/static/js/dnd_units.js"></script>
+</body>
+</html>

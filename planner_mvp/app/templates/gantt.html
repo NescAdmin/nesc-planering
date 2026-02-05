@@ -1,0 +1,66 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Gantt – {{project.name}}</title>
+  <link rel="stylesheet" href="/static/css/app.css"/>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">Planner MVP</div>
+  <div class="nav">
+    <a href="/">Resursvy</a>
+    <a href="/projects">Projekt</a>
+    <a href="/projects/{{project.id}}">Tillbaka till projekt</a>
+  </div>
+  <div class="user">Inloggad (dev): {{active_user.name}} (#{{active_user.id}})</div>
+</div>
+
+<div class="container">
+  <h1>Timeline/Gantt – {{project.name}}</h1>
+  <p class="muted">Riktiga bars med datumskala. Varje barsegment representerar ett planeringsblock.</p>
+
+  <div class="panel" style="overflow:auto">
+    <div class="gantt-container">
+      <div class="gantt-left-header">WorkItem</div>
+
+      <div class="gantt-right-header">
+        <div class="gantt-axis" style="width: {{total_width}}px">
+          {% for x in day_lines %}
+            <div class="gantt-tick" style="left: {{x}}px"></div>
+          {% endfor %}
+          {% for t in week_ticks %}
+            <div class="gantt-week-label" style="left: {{t.x}}px">{{t.label}}</div>
+          {% endfor %}
+        </div>
+      </div>
+
+      {% for wi in workitems %}
+        <div class="gantt-left-row">
+          <div style="display:flex; gap:8px; align-items:center">
+            <span class="color-dot" style="background: {{project.color}}"></span>
+            <a href="/workitems/{{wi.id}}">{{wi.title}}</a>
+          </div>
+          <div class="muted">{{ (wi.total_minutes//60) }}h {{ (wi.total_minutes%60) }}m</div>
+        </div>
+
+        <div class="gantt-right-row">
+          <div class="gantt-line" style="width: {{total_width}}px">
+            {% for x in day_lines %}
+              <div class="gantt-tick" style="left: {{x}}px"></div>
+            {% endfor %}
+            {% for seg in wi_segments.get(wi.id, []) %}
+              <div class="gantt-seg" title="{{seg.start.isoformat(sep=' ', timespec='minutes')}} → {{seg.end.isoformat(sep=' ', timespec='minutes')}}"
+                   style="left: {{seg.x}}px; width: {{seg.w}}px; background: {{project.color}}"></div>
+            {% endfor %}
+            {% if wi_segments.get(wi.id, [])|length == 0 %}
+              <div class="muted" style="padding:8px">Ej planerad</div>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+</body>
+</html>

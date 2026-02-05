@@ -1,0 +1,96 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Setup – skapa företag</title>
+  <link rel="stylesheet" href="/static/css/app.css"/>
+</head>
+<body>
+<div class="container narrow">
+  <h1>Första gången: skapa företag</h1>
+  <p class="muted">Skapa ett företag (t.ex. NESC AB). Här sätter du basregler och enhetskatalog som följer med i alla projekt.</p>
+
+  <form method="post" action="/setup" class="card">
+    <h2>Företag</h2>
+    <label>Företagsnamn</label>
+    <input name="company_name" required placeholder="NESC AB"/>
+
+    <div class="grid2">
+      <div>
+        <label>Arbetstid start</label>
+        <input name="work_start" value="08:00"/>
+      </div>
+      <div>
+        <label>Arbetstid slut</label>
+        <input name="work_end" value="17:00"/>
+      </div>
+    </div>
+
+    <h2>Medlemmar</h2>
+    <p class="muted">Välj vilka befintliga användare som ska ingå i företaget. (I demo kan du byta användare med <code>?as_user=</code>)</p>
+    <div class="list">
+      {% for u in users %}
+        <label class="row">
+          <input type="checkbox" name="member_user_ids" value="{{u.id}}" checked/>
+          <span>{{u.name}} ({{u.email}}) — <span class="muted">{{u.role}}</span></span>
+        </label>
+      {% endfor %}
+    </div>
+
+    <h2>Enheter (enhetskatalog)</h2>
+    <p class="muted">Exempel: HD/F 30 min, Vägg 60 min, STT 60 min.</p>
+
+    <table class="table" id="unitTable">
+      <thead>
+        <tr><th>Namn</th><th>Minuter/enhet</th><th></th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><input name="unit_names" value="HD/F"/></td>
+          <td><input name="unit_minutes" type="number" value="30"/></td>
+          <td><input name="unit_icons" value="🔧"/></td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><input name="unit_names" value="Vägg"/></td>
+          <td><input name="unit_minutes" type="number" value="60"/></td>
+          <td><input name="unit_icons" value="🧱"/></td>
+          <td></td>
+        </tr>
+        <tr>
+          <td><input name="unit_names" value="STT"/></td>
+          <td><input name="unit_minutes" type="number" value="60"/></td>
+          <td><input name="unit_icons" value="🧩"/></td>
+          <td></td>
+        </tr>
+      </tbody>
+    </table>
+    <button type="button" class="btn" id="addUnitRow">+ Lägg till rad</button>
+
+    <div style="margin-top:14px">
+      <button class="btn primary" type="submit">Skapa företag</button>
+    </div>
+  </form>
+
+  <p class="muted">Tips: Om du vill börja om helt, radera <code>planner.db</code> och kör <code>python -m app.seed</code> igen.</p>
+</div>
+
+<script>
+(function(){
+  const btn = document.getElementById("addUnitRow");
+  const tbody = document.querySelector("#unitTable tbody");
+  btn.addEventListener("click", () => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><input name="unit_names" placeholder="Namn"/></td>
+      <td><input name="unit_minutes" type="number" value="60"/></td>
+      <td><input name="unit_icons" value="■"/></td>
+      <td><button type="button" class="btn danger mini">Ta bort</button></td>
+    `;
+    tr.querySelector("button").addEventListener("click", () => tr.remove());
+    tbody.appendChild(tr);
+  });
+})();
+</script>
+</body>
+</html>
