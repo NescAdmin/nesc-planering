@@ -6,37 +6,42 @@
   <link rel="stylesheet" href="/static/css/app.css"/>
 </head>
 <body>
-  <div class="container" style="max-width:720px; margin-top:60px;">
-    <div class="card" style="padding:22px;">
-      <div style="display:flex; justify-content:space-between; align-items:baseline; gap:12px;">
-        <div style="font-weight:800; font-size:22px;">{{app_name}}</div>
-        <div class="muted">{{app_version}}</div>
+{% include "partials_topbar.html" %}
+<div class="container" style="max-width:820px; margin-top:18px;">
+  <div class="card" style="padding:22px;">
+    <div style="display:flex; justify-content:space-between; align-items:baseline; gap:12px; flex-wrap:wrap;">
+      <div>
+        <div style="font-weight:800; font-size:22px;">Logga in</div>
+        <div class="muted" style="margin-top:4px;">{{company.name}}</div>
       </div>
+      <div class="muted">{{app_version}}</div>
+    </div>
 
-      <div style="margin-top:14px;">
-        <h2 style="margin:0 0 6px 0;">Logga in</h2>
-        <div class="muted" style="margin-bottom:12px;">{{company.name}}</div>
+    {% if ms_provider_requested and not ms_configured %}
+      <div class="badge danger" style="margin:14px 0;">
+        Microsoft-inloggning är aktiverad men saknar konfiguration på Render (AZURE_CLIENT_ID / AZURE_CLIENT_SECRET).
+      </div>
+    {% endif %}
 
-        {% if ms_provider_requested and not ms_configured %}
-          <div class="card" style="padding:12px; margin:12px 0; border:1px solid #f3c8c8; background:#fff7f7;">
-            <div style="font-weight:700;">Microsoft-inloggning är aktiverad men inte konfigurerad.</div>
-            <div class="muted" style="margin-top:6px; font-size:13px;">
-              Sätt miljövariablerna <strong>AZURE_CLIENT_ID</strong> och <strong>AZURE_CLIENT_SECRET</strong> på Render.
-              (Valfritt: <strong>AZURE_TENANT_ID</strong> och <strong>PUBLIC_BASE_URL</strong>.)
-            </div>
-          </div>
-        {% endif %}
+    {% if ms_configured %}
+      <div style="margin-top:16px;">
+        <a class="btn primary" href="/auth/microsoft?next={{ next|urlencode }}" style="display:inline-flex; align-items:center; gap:10px; padding:12px 16px;">
+          <span style="font-weight:700;">Logga in med Microsoft</span>
+          <span class="muted" style="font-size:13px;">(Entra ID)</span>
+        </a>
+      </div>
+      <div class="muted" style="margin-top:10px; font-size:13px;">
+        Använd din Microsoft-konto för att logga in.
+      </div>
+    {% else %}
+      <div class="muted" style="margin-top:16px;">
+        Microsoft-inloggning är inte aktiverad. (Sätt <code>AUTH_PROVIDER=azuread</code> och env-variablerna på Render.)
+      </div>
+    {% endif %}
 
-        {% if ms_configured %}
-          <a class="btn primary" href="/auth/microsoft?next={{ next|urlencode }}" style="display:inline-flex; align-items:center; gap:8px;">
-            Logga in med Microsoft
-          </a>
-          <div class="muted" style="margin-top:10px; font-size:13px;">(Azure AD / Microsoft Entra ID)</div>
-          <hr style="margin:18px 0; border:none; border-top:1px solid #eee;"/>
-        {% endif %}
-
-        <div class="muted" style="margin-bottom:8px;">Admin/felsök: välj användare manuellt.</div>
-
+    <details style="margin-top:16px;">
+      <summary class="muted" style="cursor:pointer;">Admin/felsök: välj användare manuellt</summary>
+      <div style="margin-top:10px;">
         <form method="post" action="/login" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
           <input type="hidden" name="next" value="{{next}}"/>
           <select name="user_id" style="min-width:280px;">
@@ -46,12 +51,12 @@
           </select>
           <button class="btn" type="submit">Logga in</button>
         </form>
+        <div class="muted" style="margin-top:8px; font-size:13px;">
+          Om listan är tom: skapa första admin via <a href="/setup">Registrera företag</a> eller kör seed lokalt.
+        </div>
       </div>
-
-      <div class="muted" style="margin-top:14px; font-size:13px;">
-        Tips: Om du inte ser en användare här, lägg till personen under <strong>Företag</strong> efter att du loggat in som admin.
-      </div>
-    </div>
+    </details>
   </div>
+</div>
 </body>
 </html>

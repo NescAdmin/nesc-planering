@@ -2,13 +2,14 @@
 <html>
 <head>
   <meta charset="utf-8"/>
-  <title>Setup – skapa företag</title>
+  <title>Registrera företag – {{app_name}}</title>
   <link rel="stylesheet" href="/static/css/app.css"/>
 </head>
 <body>
-<div class="container narrow">
-  <h1>Första gången: skapa företag</h1>
-  <p class="muted">Skapa ett företag (t.ex. NESC AB). Här sätter du basregler och enhetskatalog som följer med i alla projekt.</p>
+{% include "partials_topbar.html" %}
+<div class="container narrow" style="margin-top:18px;">
+  <h1>Registrera företag</h1>
+  <p class="muted">Första gången: skapa företag, basregler och enhetskatalog.</p>
 
   <form method="post" action="/setup" class="card">
     <h2>Företag</h2>
@@ -26,45 +27,61 @@
       </div>
     </div>
 
-    <h2>Medlemmar</h2>
-    <p class="muted">Välj vilka befintliga användare som ska ingå i företaget. (I demo kan du byta användare med <code>?as_user=</code>)</p>
-    <div class="list">
-      {% for u in users %}
-        <label class="row">
-          <input type="checkbox" name="member_user_ids" value="{{u.id}}" checked/>
-          <span>{{u.name}} ({{u.email}}) — <span class="muted">{{u.role}}</span></span>
-        </label>
-      {% endfor %}
-    </div>
+    <h2>Inloggning / Admin</h2>
+
+    {% if users|length == 0 %}
+      <p class="muted">Inga användare finns ännu. Skapa första admin så kan du bjuda in fler senare.</p>
+      <div class="grid2">
+        <div>
+          <label>Namn</label>
+          <input name="admin_name" required placeholder="Förnamn Efternamn"/>
+        </div>
+        <div>
+          <label>E-post</label>
+          <input name="admin_email" required placeholder="namn@nesc.se"/>
+        </div>
+      </div>
+    {% else %}
+      <p class="muted">Välj vilka befintliga användare som ska ingå i företaget. Du kan lägga till/ta bort personer senare under <strong>Företag</strong>.</p>
+      <div class="list">
+        {% for u in users %}
+          <label class="row">
+            <input type="checkbox" name="member_user_ids" value="{{u.id}}" checked/>
+            <span>{{u.name}}{% if u.email %} ({{u.email}}){% endif %} — <span class="muted">{{u.role}}</span></span>
+          </label>
+        {% endfor %}
+      </div>
+    {% endif %}
 
     <h2>Enheter (enhetskatalog)</h2>
-    <p class="muted">Exempel: HD/F 30 min, Vägg 60 min, STT 60 min.</p>
+    <p class="muted">Du kan ta bort rader du inte vill ha och lägga till egna.</p>
 
     <table class="table" id="unitTable">
       <thead>
-        <tr><th>Namn</th><th>Minuter/enhet</th><th></th></tr>
+        <tr><th>Namn</th><th>Minuter/enhet</th><th>Ikon</th><th></th></tr>
       </thead>
       <tbody>
         <tr>
           <td><input name="unit_names" value="HD/F"/></td>
           <td><input name="unit_minutes" type="number" value="30"/></td>
           <td><input name="unit_icons" value="🔧"/></td>
-          <td></td>
+          <td style="text-align:right;"><button type="button" class="btn danger mini unit-remove">Ta bort</button></td>
         </tr>
         <tr>
           <td><input name="unit_names" value="Vägg"/></td>
           <td><input name="unit_minutes" type="number" value="60"/></td>
           <td><input name="unit_icons" value="🧱"/></td>
-          <td></td>
+          <td style="text-align:right;"><button type="button" class="btn danger mini unit-remove">Ta bort</button></td>
         </tr>
         <tr>
           <td><input name="unit_names" value="STT"/></td>
           <td><input name="unit_minutes" type="number" value="60"/></td>
           <td><input name="unit_icons" value="🧩"/></td>
-          <td></td>
+          <td style="text-align:right;"><button type="button" class="btn danger mini unit-remove">Ta bort</button></td>
         </tr>
       </tbody>
     </table>
+
     <button type="button" class="btn" id="addUnitRow">+ Lägg till rad</button>
 
     <div style="margin-top:14px">
@@ -72,22 +89,29 @@
     </div>
   </form>
 
-  <p class="muted">Tips: Om du vill börja om helt, radera <code>planner.db</code> och kör <code>python -m app.seed</code> igen.</p>
+  <p class="muted" style="margin-top:10px;">Tips: Om något blir fel efter många ändringar lokalt kan du börja om genom att radera databasen och köra seed igen.</p>
 </div>
 
 <script>
 (function(){
-  const btn = document.getElementById("addUnitRow");
   const tbody = document.querySelector("#unitTable tbody");
-  btn.addEventListener("click", () => {
+  function bindRemove(btn){
+    btn.addEventListener("click", () => {
+      const tr = btn.closest("tr");
+      if(tr) tr.remove();
+    });
+  }
+  document.querySelectorAll(".unit-remove").forEach(bindRemove);
+
+  document.getElementById("addUnitRow").addEventListener("click", () => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><input name="unit_names" placeholder="Namn"/></td>
       <td><input name="unit_minutes" type="number" value="60"/></td>
       <td><input name="unit_icons" value="■"/></td>
-      <td><button type="button" class="btn danger mini">Ta bort</button></td>
+      <td style="text-align:right;"><button type="button" class="btn danger mini unit-remove">Ta bort</button></td>
     `;
-    tr.querySelector("button").addEventListener("click", () => tr.remove());
+    bindRemove(tr.querySelector(".unit-remove"));
     tbody.appendChild(tr);
   });
 })();

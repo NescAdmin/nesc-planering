@@ -1,13 +1,18 @@
 <div class="topbar">
-  <div class="brand">NESC Planering v4.4.8</div>
-  <div class="nav">
-    <a href="/">Tidschema</a>
-    <a href="/report">Rapport</a>
-    <a href="/projects">Projekt</a>
-    <a href="/timeoff">Frånvaro</a>
-    <a href="/company">Företag</a>
-  </div>
+  <div class="brand">NESC Planering v4.4.9</div>
   {% if active_user %}
+    <div class="nav">
+      <a href="/">Tidschema</a>
+      <a href="/report">Rapport</a>
+      <a href="/projects">Projekt</a>
+      <a href="/timeoff">Frånvaro</a>
+      <a href="/company">Företag</a>
+    </div>
     <div class="user">{{active_user.name}} <a href="/logout" style="margin-left:10px; opacity:0.85;">Logga ut</a></div>
+  {% else %}
+    <div class="nav">
+      <a href="/login">Logga in</a>
+      <a href="/setup">Registrera företag</a>
+    </div>
   {% endif %}
 </div>

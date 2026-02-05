@@ -13,6 +13,7 @@ import urllib.request
 from jose import jwt
 
 from fastapi import FastAPI, Request, Form, HTTPException
+from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
@@ -48,6 +49,38 @@ def _dm(val):
 
 templates.env.filters["dm"] = _dm
 templates.env.filters["urlencode"] = lambda v: quote(str(v))
+
+# -------------------------
+# Friendly redirects for unauthenticated users (HTML routes)
+# -------------------------
+
+@app.exception_handler(HTTPException)
+async def _handle_http_exception(request: Request, exc: HTTPException):
+    # For API routes, keep JSON errors.
+    if request.url.path.startswith("/api/"):
+        return await fastapi_http_exception_handler(request, exc)
+
+    if exc.status_code == 401:
+        # Clear session and redirect to login/setup.
+        request.session.pop("uid", None)
+
+        # Decide destination: /setup if no company exists, otherwise /login
+        with get_session() as session:
+            company = session.exec(select(Company)).first()
+
+        dest = "/setup" if not company else "/login"
+        # Preserve intended destination after login
+        if dest == "/login":
+            next_url = request.url.path
+            if request.url.query:
+                next_url = next_url + "?" + request.url.query
+            dest = f"/login?next={quote(next_url)}"
+        return RedirectResponse(dest, status_code=302)
+
+    # Default behavior for other HTTP errors on HTML pages:
+    return await fastapi_http_exception_handler(request, exc)
+
+
 
 
 # -------------------------
@@ -469,9 +502,9 @@ async def require_login(request: Request, call_next):
 def setup_get(request: Request):
     with get_session() as session:
         if session.exec(select(Company)).first():
-            return RedirectResponse("/", status_code=302)
+            return RedirectResponse("/login", status_code=302)
         users = session.exec(select(User)).all()
-        return templates.TemplateResponse("setup.html", {"request": request, "users": users})
+        return templates.TemplateResponse("setup.html", {"request": request, "users": users, "app_name": APP_NAME, "app_version": APP_VERSION, "active_user": None})
 
 
 @app.post("/setup")
@@ -481,8 +514,10 @@ def setup_post(
     work_start: str = Form("08:00"),
     work_end: str = Form("17:00"),
     member_user_ids: Optional[List[int]] = Form(None),
+    admin_name: Optional[str] = Form(None),
+    admin_email: Optional[str] = Form(None),
     unit_names: Optional[List[str]] = Form(None),
-    unit_minutes: Optional[List[int]] = Form(None),
+    unit_minutes: Optional[List[str]] = Form(None),
     unit_icons: Optional[List[str]] = Form(None),
 ):
     with get_session() as session:
@@ -495,22 +530,60 @@ def setup_post(
         session.refresh(c)
 
         member_user_ids = member_user_ids or []
-        users = {u.id: u for u in session.exec(select(User)).all()}
+        all_users = session.exec(select(User)).all()
+        users_by_id = {u.id: u for u in all_users}
+
+        created_admin: Optional[User] = None
+
+        # If there are no users in the database yet, create the first admin.
+        if not all_users:
+            if not (admin_name and admin_email):
+                # Cannot proceed without an admin user.
+                raise HTTPException(400, "No users exist. Provide admin_name and admin_email.")
+            created_admin = User(name=admin_name.strip(), email=admin_email.strip().lower(), role="admin")
+            session.add(created_admin)
+            session.commit()
+            session.refresh(created_admin)
+            users_by_id[created_admin.id] = created_admin
+            member_user_ids = [created_admin.id]
+
+        # If users exist but none were selected, default to including all users.
+        if all_users and not member_user_ids:
+            member_user_ids = [u.id for u in all_users]
+
+        # Create company members + persons
+        login_uid: Optional[int] = None
         for uid in member_user_ids:
-            u = users.get(uid)
+            u = users_by_id.get(uid)
             if not u:
                 continue
             role_in_company = "admin" if u.role == "admin" else ("planner" if u.role == "planner" else "employee")
             session.add(CompanyMember(company_id=c.id, user_id=uid, role_in_company=role_in_company))
             if u.role != "external":
                 session.add(Person(company_id=c.id, user_id=uid, work_start=c.work_start, work_end=c.work_end, work_days=c.work_days))
+            # Prefer an admin as default login user
+            if login_uid is None or role_in_company == "admin":
+                login_uid = uid
 
-        if unit_names and unit_minutes:
+        session.commit()
+
+        # Auto-login after setup (so you can continue immediately)
+        if login_uid:
+            request.session["uid"] = int(login_uid)
+
+        if unit_names:
+            unit_minutes = unit_minutes or []
+            unit_icons = unit_icons or []
             for i, name in enumerate(unit_names):
                 if not name or not str(name).strip():
                     continue
-                minutes = int(unit_minutes[i]) if i < len(unit_minutes) else 60
-                icon = unit_icons[i] if unit_icons and i < len(unit_icons) and unit_icons[i] else "■"
+                # minutes can be blank; default to 60
+                minutes_raw = unit_minutes[i] if i < len(unit_minutes) else ""
+                try:
+                    minutes = int(str(minutes_raw).strip()) if str(minutes_raw).strip() else 60
+                except Exception:
+                    minutes = 60
+                icon = unit_icons[i] if i < len(unit_icons) and unit_icons[i] else "■"
                 session.add(UnitType(company_id=c.id, name=name.strip(), default_minutes=minutes, icon=icon))
 
         session.commit()
@@ -553,6 +626,7 @@ def login_get(request: Request):
                 "app_version": APP_VERSION,
                 "ms_provider_requested": ms_provider_requested,
                 "ms_configured": ms_configured,
+                "active_user": None,
             },
         )
 
@@ -738,10 +812,18 @@ def logout(request: Request):
 @app.get("/company", response_class=HTMLResponse)
 def company_admin(request: Request):
     with get_session() as session:
-        user = _get_active_user(session, request)
         company = _get_active_company(session, request)
         if not company:
             return RedirectResponse("/setup", status_code=302)
+
+        # If not logged in, go to login (base URL should always work).
+        if not request.session.get("uid"):
+            return RedirectResponse(f"/login?next={quote(str(request.url.path + (('?' + request.url.query) if request.url.query else '')))}", status_code=302)
+
+        try:
+            user = _get_active_user(session, request)
+        except HTTPException:
+            return RedirectResponse("/login", status_code=302)
 
         members = session.exec(select(CompanyMember).where(CompanyMember.company_id == company.id)).all()
         users = {u.id: u for u in session.exec(select(User)).all()}
