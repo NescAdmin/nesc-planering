@@ -15,7 +15,27 @@
 
       <div style="margin-top:14px;">
         <h2 style="margin:0 0 6px 0;">Logga in</h2>
-        <div class="muted" style="margin-bottom:12px;">Välj dig själv för {{company.name}}.</div>
+        <div class="muted" style="margin-bottom:12px;">{{company.name}}</div>
+
+        {% if ms_provider_requested and not ms_configured %}
+          <div class="card" style="padding:12px; margin:12px 0; border:1px solid #f3c8c8; background:#fff7f7;">
+            <div style="font-weight:700;">Microsoft-inloggning är aktiverad men inte konfigurerad.</div>
+            <div class="muted" style="margin-top:6px; font-size:13px;">
+              Sätt miljövariablerna <strong>AZURE_CLIENT_ID</strong> och <strong>AZURE_CLIENT_SECRET</strong> på Render.
+              (Valfritt: <strong>AZURE_TENANT_ID</strong> och <strong>PUBLIC_BASE_URL</strong>.)
+            </div>
+          </div>
+        {% endif %}
+
+        {% if ms_configured %}
+          <a class="btn primary" href="/auth/microsoft?next={{ next|urlencode }}" style="display:inline-flex; align-items:center; gap:8px;">
+            Logga in med Microsoft
+          </a>
+          <div class="muted" style="margin-top:10px; font-size:13px;">(Azure AD / Microsoft Entra ID)</div>
+          <hr style="margin:18px 0; border:none; border-top:1px solid #eee;"/>
+        {% endif %}
+
+        <div class="muted" style="margin-bottom:8px;">Admin/felsök: välj användare manuellt.</div>
 
         <form method="post" action="/login" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
           <input type="hidden" name="next" value="{{next}}"/>
@@ -24,7 +44,7 @@
               <option value="{{u.id}}">{{u.name}}{% if u.email %} ({{u.email}}){% endif %}</option>
             {% endfor %}
           </select>
-          <button class="btn primary" type="submit">Logga in</button>
+          <button class="btn" type="submit">Logga in</button>
         </form>
       </div>
 

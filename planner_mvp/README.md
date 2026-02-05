@@ -1,4 +1,4 @@
-# NESC Planering (v4.4.8)
+# NESC Planering (v4.4.9)
 
 NESC Planering är en FastAPI/SQLModel-app för resursplanering.
 
@@ -60,6 +60,34 @@ Välj en av två vägar:
   ```bash
   python -m app.seed
   ```
+
+## Microsoft-inloggning (Azure AD / Microsoft Entra ID)
+
+Appen stödjer Microsoft-inloggning via OAuth2/OIDC (Authorization Code + PKCE).
+
+### 1) Skapa App registration
+Microsoft Entra admin center → **App registrations** → **New registration**.
+
+- Supported account types: vanligtvis **Accounts in this organizational directory only** (Single tenant)
+- Redirect URI (Web):
+  - `https://DIN-RENDER-URL/auth/microsoft/callback`
+
+Skapa även en **Client secret** (Certificates & secrets).
+
+### 2) Sätt env vars på Render
+På din Render Web Service:
+
+- `AUTH_PROVIDER=azuread`
+- `PUBLIC_BASE_URL=https://DIN-RENDER-URL`
+- `AZURE_TENANT_ID=<din tenant id>` (eller `organizations`)
+- `AZURE_CLIENT_ID=<Application (client) ID>`
+- `AZURE_CLIENT_SECRET=<client secret value>`
+
+Valfritt (för att låsa ner vem som får logga in):
+- `AZURE_ALLOWED_DOMAIN=nesc.se`
+
+### 3) Logga in
+Gå till `/login` och klicka **Logga in med Microsoft**.
 
 ## Uppgradering lokalt (SQLite)
 

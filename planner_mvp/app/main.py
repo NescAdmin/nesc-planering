@@ -4,7 +4,13 @@ from datetime import datetime, timedelta, date
 import os
 import secrets
 from typing import Optional, List, Dict, Tuple
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
+import json
+import base64
+import hashlib
+import urllib.request
+
+from jose import jwt
 
 from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
@@ -19,7 +25,7 @@ from .models import (
 )
 
 APP_NAME = "NESC Planering"
-APP_VERSION = "v4.4.8"
+APP_VERSION = "v4.4.9"
 
 app = FastAPI(title=APP_NAME)
 # Cookie-based sessions (signed). In production, set SECRET_KEY.
@@ -41,6 +47,117 @@ def _dm(val):
         return str(val)
 
 templates.env.filters["dm"] = _dm
+templates.env.filters["urlencode"] = lambda v: quote(str(v))
+
+
+# -------------------------
+# Microsoft Entra ID (Azure AD) auth helpers
+# -------------------------
+
+_MS_CACHE: Dict[str, Dict] = {"oidc": {}, "jwks": {}}
+
+
+def _ms_configured() -> bool:
+    # Enable Azure AD auth when AUTH_PROVIDER=azuread and required env vars exist.
+    if os.environ.get("AUTH_PROVIDER", "").lower() != "azuread":
+        return False
+    return bool(os.environ.get("AZURE_CLIENT_ID") and os.environ.get("AZURE_CLIENT_SECRET"))
+
+
+def _public_base_url(request: Request) -> str:
+    # Prefer explicit base URL (needed for correct redirect_uri behind proxies)
+    base = (os.environ.get("PUBLIC_BASE_URL") or "").strip().rstrip("/")
+    if base:
+        return base
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+    return f"{proto}://{host}".rstrip("/")
+
+
+def _ms_tenant() -> str:
+    # Use organizations by default (work/school accounts). Can be tenant ID or domain.
+    return (os.environ.get("AZURE_TENANT_ID") or "organizations").strip()
+
+
+def _ms_authority(tenant: str) -> str:
+    return f"https://login.microsoftonline.com/{tenant}"
+
+
+def _ms_redirect_uri(request: Request) -> str:
+    return _public_base_url(request) + "/auth/microsoft/callback"
+
+
+def _b64url(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).decode("utf-8").rstrip("=")
+
+
+def _ms_pkce_pair() -> Tuple[str, str]:
+    verifier = secrets.token_urlsafe(48)
+    challenge = _b64url(hashlib.sha256(verifier.encode("utf-8")).digest())
+    return verifier, challenge
+
+
+def _http_post_form(url: str, data: Dict[str, str]) -> Dict:
+    body = urlencode(data).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        raw = resp.read().decode("utf-8")
+        return json.loads(raw)
+
+
+def _http_get_json(url: str) -> Dict:
+    with urllib.request.urlopen(url, timeout=20) as resp:
+        raw = resp.read().decode("utf-8")
+        return json.loads(raw)
+
+
+def _ms_discovery(tenant: str) -> Dict:
+    cached = _MS_CACHE["oidc"].get(tenant)
+    if cached and (datetime.now().timestamp() - cached["ts"]) < 3600:
+        return cached["val"]
+    val = _http_get_json(_ms_authority(tenant) + "/v2.0/.well-known/openid-configuration")
+    _MS_CACHE["oidc"][tenant] = {"ts": datetime.now().timestamp(), "val": val}
+    return val
+
+
+def _ms_jwks(tenant: str) -> Dict:
+    cached = _MS_CACHE["jwks"].get(tenant)
+    if cached and (datetime.now().timestamp() - cached["ts"]) < 3600:
+        return cached["val"]
+    oidc = _ms_discovery(tenant)
+    jwks_uri = oidc.get("jwks_uri")
+    if not jwks_uri:
+        # Fallback to documented keys endpoint
+        jwks_uri = _ms_authority(tenant) + "/discovery/v2.0/keys"
+    val = _http_get_json(jwks_uri)
+    _MS_CACHE["jwks"][tenant] = {"ts": datetime.now().timestamp(), "val": val}
+    return val
+
+
+def _ms_validate_id_token(id_token: str, client_id: str, expected_nonce: str) -> Dict:
+    # Validate signature, audience, issuer, exp, nonce.
+    unverified = jwt.get_unverified_claims(id_token)
+    tid = unverified.get("tid")
+    if not tid:
+        raise HTTPException(401, "Microsoft token saknar tenant (tid).")
+    issuer = f"https://login.microsoftonline.com/{tid}/v2.0"
+    jwks = _ms_jwks(tid)
+    claims = jwt.decode(
+        id_token,
+        jwks,
+        algorithms=["RS256"],
+        audience=client_id,
+        issuer=issuer,
+        options={"verify_at_hash": False},
+    )
+    if claims.get("nonce") != expected_nonce:
+        raise HTTPException(401, "Ogiltig nonce i Microsoft-inloggning.")
+    return claims
 
 
 # -------------------------
@@ -316,6 +433,7 @@ async def require_login(request: Request, call_next):
         or path.startswith("/shared")
         or path.startswith("/login")
         or path.startswith("/logout")
+        or path.startswith("/auth/microsoft")
         or path.startswith("/setup")
         or path.startswith("/healthz")
     ):
@@ -421,6 +539,9 @@ def login_get(request: Request):
             users = session.exec(select(User)).all()
 
         users = sorted(users, key=lambda u: (u.name or u.email or ""))
+        ms_provider_requested = os.environ.get("AUTH_PROVIDER", "").lower() == "azuread"
+        ms_configured = _ms_configured()
+
         return templates.TemplateResponse(
             "login.html",
             {
@@ -430,6 +551,8 @@ def login_get(request: Request):
                 "next": next_url,
                 "app_name": APP_NAME,
                 "app_version": APP_VERSION,
+                "ms_provider_requested": ms_provider_requested,
+                "ms_configured": ms_configured,
             },
         )
 
@@ -445,9 +568,170 @@ def login_post(request: Request, user_id: int = Form(...), next: str = Form(""))
     return RedirectResponse(next or "/", status_code=302)
 
 
+# -------------------------
+# Microsoft Entra ID login
+# -------------------------
+
+
+@app.get("/auth/microsoft")
+def ms_login_start(request: Request, next: str = ""):
+    if not _ms_configured():
+        raise HTTPException(500, "Microsoft-inloggning är inte konfigurerad (saknar AZURE_CLIENT_ID/SECRET eller AUTH_PROVIDER=azuread).")
+
+    state = secrets.token_urlsafe(24)
+    nonce = secrets.token_urlsafe(24)
+    verifier, challenge = _ms_pkce_pair()
+
+    request.session["ms_state"] = state
+    request.session["ms_nonce"] = nonce
+    request.session["ms_verifier"] = verifier
+    request.session["ms_next"] = next or "/"
+
+    tenant = _ms_tenant()
+    client_id = os.environ.get("AZURE_CLIENT_ID")
+    redirect_uri = _ms_redirect_uri(request)
+
+    authorize = _ms_authority(tenant) + "/oauth2/v2.0/authorize"
+    params = {
+        "client_id": client_id,
+        "response_type": "code",
+        "redirect_uri": redirect_uri,
+        "response_mode": "query",
+        "scope": "openid profile email",
+        "state": state,
+        "nonce": nonce,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "prompt": "select_account",
+    }
+    return RedirectResponse(authorize + "?" + urlencode(params), status_code=302)
+
+
+@app.get("/auth/microsoft/callback")
+def ms_login_callback(
+    request: Request,
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+    error_description: Optional[str] = None,
+):
+    if error:
+        msg = (error_description or error or "Microsoft-inloggning misslyckades.").strip()
+        raise HTTPException(401, msg)
+
+    expected_state = request.session.get("ms_state")
+    expected_nonce = request.session.get("ms_nonce")
+    verifier = request.session.get("ms_verifier")
+    next_url = request.session.get("ms_next") or "/"
+
+    # One-shot values
+    request.session.pop("ms_state", None)
+    request.session.pop("ms_nonce", None)
+    request.session.pop("ms_verifier", None)
+    request.session.pop("ms_next", None)
+
+    if not code or not state or not expected_state or state != expected_state:
+        raise HTTPException(401, "Ogiltig inloggningssession (state). Försök igen.")
+
+    if not verifier or not expected_nonce:
+        raise HTTPException(401, "Ogiltig inloggningssession. Försök igen.")
+
+    tenant = _ms_tenant()
+    client_id = os.environ.get("AZURE_CLIENT_ID")
+    client_secret = os.environ.get("AZURE_CLIENT_SECRET")
+    redirect_uri = _ms_redirect_uri(request)
+
+    token_url = _ms_authority(tenant) + "/oauth2/v2.0/token"
+    token = _http_post_form(
+        token_url,
+        {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "code_verifier": verifier,
+            "scope": "openid profile email",
+        },
+    )
+
+    id_token = token.get("id_token")
+    if not id_token:
+        raise HTTPException(401, "Microsoft svarade utan id_token.")
+
+    claims = _ms_validate_id_token(id_token, client_id, expected_nonce)
+
+    email = (
+        claims.get("preferred_username")
+        or claims.get("email")
+        or claims.get("upn")
+        or claims.get("unique_name")
+        or ""
+    ).strip()
+    name = (claims.get("name") or "").strip()
+    tid = (claims.get("tid") or "").strip()
+
+    if not email:
+        raise HTTPException(401, "Microsoft-inloggning saknar e-post/username.")
+
+    allowed_domain = (os.environ.get("AZURE_ALLOWED_DOMAIN") or "").strip().lower().lstrip("@")
+    if allowed_domain and not email.lower().endswith("@" + allowed_domain):
+        raise HTTPException(403, "E-postdomän är inte tillåten för denna tjänst.")
+
+    with get_session() as session:
+        company = session.exec(select(Company)).first()
+        if not company:
+            return RedirectResponse("/setup", status_code=302)
+
+        u = session.exec(select(User).where(User.email == email)).first()
+
+        if not u:
+            # If there are no users/members yet, make the first one admin so you don't lock yourself out.
+            is_first = session.exec(select(User)).first() is None
+            role = "admin" if is_first else "employee"
+            u = User(name=name or email.split("@")[0], email=email, role=role)
+            session.add(u)
+            session.commit()
+            session.refresh(u)
+
+        mem = session.exec(
+            select(CompanyMember).where(CompanyMember.company_id == company.id, CompanyMember.user_id == u.id)
+        ).first()
+        if not mem:
+            role_in_company = "admin" if u.role == "admin" else ("planner" if u.role == "planner" else "employee")
+            session.add(CompanyMember(company_id=company.id, user_id=u.id, role_in_company=role_in_company))
+            if u.role != "external":
+                session.add(
+                    Person(
+                        company_id=company.id,
+                        user_id=u.id,
+                        work_start=company.work_start,
+                        work_end=company.work_end,
+                        work_days=company.work_days,
+                    )
+                )
+            session.commit()
+
+        # Logged in
+        request.session["uid"] = u.id
+        request.session["auth_provider"] = "azuread"
+        request.session["ms_tid"] = tid
+
+    return RedirectResponse(next_url or "/", status_code=302)
+
+
 @app.get("/logout")
 def logout(request: Request):
+    provider = request.session.get("auth_provider")
+    tid = request.session.get("ms_tid") or _ms_tenant()
     request.session.clear()
+
+    # If logged in via Microsoft, also sign out from Entra ID
+    if provider == "azuread":
+        post_logout = _public_base_url(request) + "/login"
+        url = _ms_authority(tid) + "/oauth2/v2.0/logout?" + urlencode({"post_logout_redirect_uri": post_logout})
+        return RedirectResponse(url, status_code=302)
+
     return RedirectResponse("/login", status_code=302)
 
 
