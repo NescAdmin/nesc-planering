@@ -28,19 +28,17 @@ from .models import (
 )
 
 APP_NAME = "NESC Planering"
-APP_VERSION = "v4.4.10"
+APP_VERSION = "v4.4.11"
 
 app = FastAPI(title=APP_NAME)
-# Cookie-based sessions (signed). In production, set SECRET_KEY.
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=os.environ.get("SECRET_KEY", "dev-secret-change-me"),
-    same_site="lax",
-)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 
 from fastapi.templating import Jinja2Templates
 templates = Jinja2Templates(directory="app/templates")
+
+# Make app name/version available in all templates
+templates.env.globals["app_name"] = APP_NAME
+templates.env.globals["app_version"] = APP_VERSION
 
 # Jinja filters (format dates without year)
 def _dm(val):
@@ -269,7 +267,11 @@ def _ms_validate_id_token(id_token: str, client_id: str, expected_nonce: str) ->
 
 def _get_active_user(session, request: Request) -> User:
     # Primary auth: signed session cookie
-    uid = request.session.get("uid")
+    try:
+        uid = request.session.get("uid")
+    except AssertionError:
+        # Defensive: if SessionMiddleware is not in the stack, treat as not logged in.
+        uid = None
     if not uid:
         # Dev escape hatch: ?as_user=<id> (also writes session)
         uid_q = request.query_params.get("as_user")
@@ -543,10 +545,18 @@ async def require_login(request: Request, call_next):
         or path.startswith("/auth/microsoft")
         or path.startswith("/setup")
         or path.startswith("/healthz")
+        or path == "/favicon.ico"
+        or path == "/robots.txt"
+        or path == "/manifest.json"
     ):
         return await call_next(request)
 
-    uid = request.session.get("uid")
+    # Session cookie
+    try:
+        uid = request.session.get("uid")
+    except AssertionError:
+        # Defensive: if SessionMiddleware is not in the stack, treat as not logged in.
+        uid = None
 
     # If no company exists yet, force setup (but keep /setup open above)
     if not uid:
@@ -567,6 +577,14 @@ async def require_login(request: Request, call_next):
 
     return await call_next(request)
 
+
+# Cookie-based sessions (signed). Must wrap other middlewares that access request.session.
+# In production, set SECRET_KEY on Render (Environment).
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.environ.get("SECRET_KEY", "dev-secret-change-me"),
+    same_site="lax",
+)
 
 # -------------------------
 # Setup / Company

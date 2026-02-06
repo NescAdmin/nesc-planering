@@ -1,5 +1,5 @@
 <div class="topbar">
-  <div class="brand">NESC Planering v4.4.9</div>
+  <div class="brand">{{ (app_name or 'NESC Planering') }} {{ (app_version or '') }}</div>
   {% if active_user %}
     <div class="nav">
       <a href="/">Tidschema</a>
