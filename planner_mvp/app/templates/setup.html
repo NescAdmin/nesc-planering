@@ -34,11 +34,11 @@
       <div class="grid2">
         <div>
           <label>Namn</label>
-          <input name="admin_name" required placeholder="Förnamn Efternamn"/>
+          <input name="admin_name" required placeholder="Förnamn Efternamn" value="{{prefill_admin_name or ''}}"/>
         </div>
         <div>
           <label>E-post</label>
-          <input name="admin_email" required placeholder="namn@nesc.se"/>
+          <input name="admin_email" required placeholder="namn@nesc.se" value="{{prefill_admin_email or ''}}"/>
         </div>
       </div>
     {% else %}

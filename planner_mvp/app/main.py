@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, date
 import os
 import secrets
+import traceback
+import uuid
 from typing import Optional, List, Dict, Tuple
 from urllib.parse import quote, urlencode
 import json
@@ -14,7 +16,7 @@ from jose import jwt
 
 from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.exception_handlers import http_exception_handler as fastapi_http_exception_handler
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from sqlmodel import select
@@ -26,7 +28,7 @@ from .models import (
 )
 
 APP_NAME = "NESC Planering"
-APP_VERSION = "v4.4.9"
+APP_VERSION = "v4.4.10"
 
 app = FastAPI(title=APP_NAME)
 # Cookie-based sessions (signed). In production, set SECRET_KEY.
@@ -49,6 +51,46 @@ def _dm(val):
 
 templates.env.filters["dm"] = _dm
 templates.env.filters["urlencode"] = lambda v: quote(str(v))
+
+# -------------------------
+# Safe parsing helpers (defensive against legacy DB rows with NULLs)
+# -------------------------
+
+def _safe_hhmm(val: Optional[str], default: str = "08:00") -> str:
+    """Return a sane HH:MM string."""
+    if not val:
+        return default
+    s = str(val).strip()
+    try:
+        hh, mm = s.split(":")
+        hh_i = int(hh)
+        mm_i = int(mm)
+        if 0 <= hh_i <= 23 and 0 <= mm_i <= 59:
+            return f"{hh_i:02d}:{mm_i:02d}"
+    except Exception:
+        pass
+    return default
+
+
+def _safe_workdays(val: Optional[str]) -> str:
+    """Return a comma-separated weekday list (Mon=0..Sun=6)."""
+    if not val:
+        return "0,1,2,3,4"
+    s = str(val).strip()
+    if not s:
+        return "0,1,2,3,4"
+    out = []
+    for part in s.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            i = int(part)
+            if 0 <= i <= 6:
+                out.append(i)
+        except Exception:
+            continue
+    return ",".join(str(i) for i in sorted(set(out))) or "0,1,2,3,4"
 
 # -------------------------
 # Friendly redirects for unauthenticated users (HTML routes)
@@ -79,6 +121,34 @@ async def _handle_http_exception(request: Request, exc: HTTPException):
 
     # Default behavior for other HTTP errors on HTML pages:
     return await fastapi_http_exception_handler(request, exc)
+
+
+@app.exception_handler(Exception)
+async def _handle_unexpected_exception(request: Request, exc: Exception):
+    """Render a readable error page instead of a blank 500.
+
+    We still keep API paths as plain text/json-like output.
+    """
+    req_id = str(uuid.uuid4())[:8]
+    # Log full traceback to server logs for troubleshooting
+    traceback.print_exc()
+
+    if request.url.path.startswith("/api/"):
+        return PlainTextResponse(f"Internal Server Error (ref {req_id})", status_code=500)
+
+    html = f"""
+    <html><head><meta charset='utf-8'><title>Internt fel</title>
+    <link rel='stylesheet' href='/static/css/app.css'/></head>
+    <body>
+      <div class='container narrow' style='margin-top:18px'>
+        <h1>Internt serverfel</h1>
+        <p class='muted'>Något gick fel i applikationen. Referens: <strong>{req_id}</strong></p>
+        <p><a class='btn primary' href='/login'>Till login</a> <a class='btn' href='/setup'>Registrera företag</a></p>
+        <p class='muted'>Öppna Render &rarr; <em>Logs</em> och sök på referensen ovan för att se detaljer.</p>
+      </div>
+    </body></html>
+    """
+    return HTMLResponse(html, status_code=500)
 
 
 
@@ -342,14 +412,16 @@ def _timeoff_overlaps(session, person_id: int, start: date, end: date) -> List[T
 
 def _hours_per_day(person: Person) -> float:
     def to_min(hhmm: str) -> int:
+        hhmm = _safe_hhmm(hhmm, "08:00")
         h, m = hhmm.split(":")
         return int(h) * 60 + int(m)
 
-    return max(0, (to_min(person.work_end) - to_min(person.work_start)) / 60.0)
+    return max(0, (to_min(getattr(person, "work_end", None)) - to_min(getattr(person, "work_start", None))) / 60.0)
 
 
 def _is_workday(person: Person, d0: date) -> bool:
-    allowed = {int(x) for x in person.work_days.split(",") if x.strip()}
+    wd = _safe_workdays(getattr(person, "work_days", None))
+    allowed = {int(x) for x in wd.split(",") if x.strip()}
     return d0.weekday() in allowed
 
 
@@ -392,9 +464,10 @@ def _project_totals(session, project_id: int) -> int:
 def _workday_minutes(person: Person) -> int:
     # Treat 08:00–17:00 as 8h/day by default (60 min lunch)
     def to_min(hhmm: str) -> int:
+        hhmm = _safe_hhmm(hhmm, "08:00")
         h, m = hhmm.split(":")
         return int(h) * 60 + int(m)
-    raw = max(0, to_min(person.work_end) - to_min(person.work_start))
+    raw = max(0, to_min(getattr(person, "work_end", None)) - to_min(getattr(person, "work_start", None)))
     # Lunch/paus: 60 min (MVP)
     return max(0, raw - 60)
 
@@ -409,7 +482,8 @@ def _planned_minutes_from_allocations(session, company_id: int, project_id: int)
             continue
         day_min = _workday_minutes(person)
         # Iterate workdays (Mon–Fri as per person.work_days)
-        allowed = {int(x) for x in person.work_days.split(",") if x.strip() != ""}
+        wd = _safe_workdays(getattr(person, "work_days", None))
+        allowed = {int(x) for x in wd.split(",") if x.strip() != ""}
         cur = a.start_date
         while cur <= a.end_date:
             if cur.weekday() in allowed:
@@ -504,7 +578,20 @@ def setup_get(request: Request):
         if session.exec(select(Company)).first():
             return RedirectResponse("/login", status_code=302)
         users = session.exec(select(User)).all()
-        return templates.TemplateResponse("setup.html", {"request": request, "users": users, "app_name": APP_NAME, "app_version": APP_VERSION, "active_user": None})
+        prefill_name = request.session.get("setup_prefill_name")
+        prefill_email = request.session.get("setup_prefill_email")
+        return templates.TemplateResponse(
+            "setup.html",
+            {
+                "request": request,
+                "users": users,
+                "app_name": APP_NAME,
+                "app_version": APP_VERSION,
+                "active_user": None,
+                "prefill_admin_name": prefill_name,
+                "prefill_admin_email": prefill_email,
+            },
+        )
 
 
 @app.post("/setup")
@@ -523,6 +610,13 @@ def setup_post(
     with get_session() as session:
         if session.exec(select(Company)).first():
             return RedirectResponse("/", status_code=302)
+
+        # If you arrived here after a Microsoft login (before a company existed),
+        # we can auto-fill the first admin from the session if the form left it blank.
+        if not admin_name:
+            admin_name = request.session.get("setup_prefill_name")
+        if not admin_email:
+            admin_email = request.session.get("setup_prefill_email")
 
         c = Company(name=company_name.strip(), work_start=work_start, work_end=work_end)
         session.add(c)
@@ -560,7 +654,15 @@ def setup_post(
             role_in_company = "admin" if u.role == "admin" else ("planner" if u.role == "planner" else "employee")
             session.add(CompanyMember(company_id=c.id, user_id=uid, role_in_company=role_in_company))
             if u.role != "external":
-                session.add(Person(company_id=c.id, user_id=uid, work_start=c.work_start, work_end=c.work_end, work_days=c.work_days))
+                session.add(
+                    Person(
+                        company_id=c.id,
+                        user_id=uid,
+                        work_start=_safe_hhmm(getattr(c, "work_start", None), "08:00"),
+                        work_end=_safe_hhmm(getattr(c, "work_end", None), "17:00"),
+                        work_days=_safe_workdays(getattr(c, "work_days", None)),
+                    )
+                )
             # Prefer an admin as default login user
             if login_uid is None or role_in_company == "admin":
                 login_uid = uid
@@ -570,6 +672,9 @@ def setup_post(
         # Auto-login after setup (so you can continue immediately)
         if login_uid:
             request.session["uid"] = int(login_uid)
+            # Setup completed -> clear prefill
+            request.session.pop("setup_prefill_name", None)
+            request.session.pop("setup_prefill_email", None)
 
         if unit_names:
             unit_minutes = unit_minutes or []
@@ -600,6 +705,9 @@ def login_get(request: Request):
     with get_session() as session:
         company = session.exec(select(Company)).first()
         if not company:
+            # No company yet: send user to setup and prefill admin fields.
+            request.session["setup_prefill_name"] = name or (email.split("@")[0] if email else "")
+            request.session["setup_prefill_email"] = email
             return RedirectResponse("/setup", status_code=302)
 
         next_url = request.query_params.get("next", "") or ""
@@ -755,6 +863,9 @@ def ms_login_callback(
     with get_session() as session:
         company = session.exec(select(Company)).first()
         if not company:
+            # No company yet: send the user to /setup and prefill the first admin.
+            request.session["setup_prefill_name"] = name or (email.split("@")[0] if email else "")
+            request.session["setup_prefill_email"] = email
             return RedirectResponse("/setup", status_code=302)
 
         u = session.exec(select(User).where(User.email == email)).first()
@@ -779,9 +890,9 @@ def ms_login_callback(
                     Person(
                         company_id=company.id,
                         user_id=u.id,
-                        work_start=company.work_start,
-                        work_end=company.work_end,
-                        work_days=company.work_days,
+                        work_start=_safe_hhmm(getattr(company, "work_start", None), "08:00"),
+                        work_end=_safe_hhmm(getattr(company, "work_end", None), "17:00"),
+                        work_days=_safe_workdays(getattr(company, "work_days", None)),
                     )
                 )
             session.commit()
@@ -947,9 +1058,9 @@ def company_members_add(
                 p = Person(
                     company_id=company.id,
                     user_id=u.id,
-                    work_start=company.work_start,
-                    work_end=company.work_end,
-                    work_days=company.work_days,
+                    work_start=_safe_hhmm(getattr(company, "work_start", None), "08:00"),
+                    work_end=_safe_hhmm(getattr(company, "work_end", None), "17:00"),
+                    work_days=_safe_workdays(getattr(company, "work_days", None)),
                 )
                 session.add(p)
 
