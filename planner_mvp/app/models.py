@@ -58,6 +58,9 @@ class Project(SQLModel, table=True):
     owner_user_id: int
     status: str = "active"  # active|closed
 
+    # If > 0, project is in "budget" mode (no unit scope). Stored in minutes.
+    budget_minutes: int = 0
+
 
 
 class WorkItem(SQLModel, table=True):

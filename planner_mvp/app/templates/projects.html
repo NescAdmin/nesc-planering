@@ -11,7 +11,7 @@
   <div class="pagehead">
     <div>
       <h1>Projekt – {{company.name}}</h1>
-      <div class="muted">Pågående projekt syns i Portföljen. Flytta projekt till Avslutade när de är klara.</div>
+      <div class="muted">Pågående projekt syns i Tidschemat. Flytta projekt till Avslutade när de är klara.</div>
     </div>
     <div class="pagehead-actions">
       <div class="seg">
@@ -29,7 +29,10 @@
           <div class="project-dot" style="background: {{p.color}}"></div>
           <div>
             <div class="h2">{{p.name}}</div>
-            <div class="muted">Scope: {{ "%.1f"|format((totals.get(p.id, {}).get("scope",0))/60) }} h · Planerat: {{ "%.1f"|format((totals.get(p.id, {}).get("planned",0))/60) }} h</div>
+            <div class="muted">
+              {% if (p.budget_minutes or 0) > 0 %}Budget{% else %}Scope{% endif %}:
+              {{ "%.1f"|format((totals.get(p.id, {}).get("scope",0))/60) }} h · Planerat: {{ "%.1f"|format((totals.get(p.id, {}).get("planned",0))/60) }} h
+            </div>
             {% if totals.get(p.id, {}).get("over",0) > 0 %}
               <div class="badge danger">Överskridet: +{{ "%.1f"|format((totals.get(p.id, {}).get("over",0))/60) }} h</div>
             {% endif %}

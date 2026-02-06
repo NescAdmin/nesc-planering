@@ -28,7 +28,7 @@ from .models import (
 )
 
 APP_NAME = "NESC Planering"
-APP_VERSION = "v4.4.11"
+APP_VERSION = "v4.4.12"
 
 app = FastAPI(title=APP_NAME)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -340,6 +340,13 @@ def _week_start(d: date) -> date:
     return d - timedelta(days=d.weekday())
 
 
+def _week_bucket(d: date) -> Tuple[date, date]:
+    """Return (start,end) for the work-week bucket (Mon–Fri) containing d."""
+    s = _week_start(d)
+    e = s + timedelta(days=4)
+    return s, e
+
+
 def _month_start(d: date) -> date:
     return d.replace(day=1)
 
@@ -460,8 +467,11 @@ def _allocations_in_range(session, company_id: int, start: date, end: date) -> L
 
 
 def _project_totals(session, project_id: int) -> int:
+    p = session.get(Project, int(project_id))
+    if p is not None and int(getattr(p, "budget_minutes", 0) or 0) > 0:
+        return int(getattr(p, "budget_minutes", 0) or 0)
     items = session.exec(select(WorkItem).where(WorkItem.project_id == project_id)).all()
-    return sum(i.total_minutes for i in items)
+    return sum(int(i.total_minutes or 0) for i in items)
 
 def _workday_minutes(person: Person) -> int:
     # Treat 08:00–17:00 as 8h/day by default (60 min lunch)
@@ -1260,6 +1270,8 @@ def _pick_color(n: int) -> str:
 def projects_new_post(
     request: Request,
     name: str = Form(...),
+    mode: str = Form("budget"),
+    budget_hours: str = Form(""),
     unit_type_ids: Optional[List[int]] = Form(None),
     quantities: Optional[List[int]] = Form(None),
 ):
@@ -1272,33 +1284,68 @@ def projects_new_post(
         existing_count = len(session.exec(select(Project).where(Project.company_id == company.id)).all())
         color = _pick_color(existing_count)
 
-        p = Project(company_id=company.id, name=name.strip(), color=color, owner_user_id=user.id)
+        mode = (mode or "budget").strip().lower()
+
+        # Budget-first workflow: if mode=budget, we store total budget hours (minutes) and do not create units.
+        budget_minutes = 0
+        if mode == "budget":
+            try:
+                bh = float(str(budget_hours or "").replace(",", ".").strip())
+            except Exception:
+                bh = 0.0
+            budget_minutes = int(round(max(0.0, bh) * 60))
+            if budget_minutes <= 0:
+                units = session.exec(select(UnitType).where(UnitType.company_id == company.id)).all()
+                return templates.TemplateResponse(
+                    "project_new.html",
+                    {
+                        "request": request,
+                        "active_user": user,
+                        "company": company,
+                        "units": units,
+                        "error": "Ange en budget (timmar) för projektet.",
+                        "prefill_name": name,
+                        "prefill_budget_hours": budget_hours,
+                        "prefill_mode": mode,
+                    },
+                    status_code=400,
+                )
+
+        p = Project(
+            company_id=company.id,
+            name=name.strip(),
+            color=color,
+            owner_user_id=user.id,
+            budget_minutes=budget_minutes,
+        )
         session.add(p)
         session.commit()
         session.refresh(p)
 
-        units = {u.id: u for u in session.exec(select(UnitType).where(UnitType.company_id == company.id)).all()}
-        unit_type_ids = unit_type_ids or []
-        quantities = quantities or []
+        # Units/scope mode (optional): create WorkItems from the unit catalog.
+        if mode != "budget":
+            units = {u.id: u for u in session.exec(select(UnitType).where(UnitType.company_id == company.id)).all()}
+            unit_type_ids = unit_type_ids or []
+            quantities = quantities or []
 
-        for i, utid in enumerate(unit_type_ids):
-            qty = int(quantities[i]) if i < len(quantities) else 0
-            if qty <= 0:
-                continue
-            ut = units.get(int(utid))
-            if not ut:
-                continue
-            minutes_per = ut.default_minutes
-            total = qty * minutes_per
-            wi = WorkItem(
-                project_id=p.id,
-                unit_type_id=ut.id,
-                title=ut.name,
-                quantity=qty,
-                minutes_per_unit=minutes_per,
-                total_minutes=total,
-            )
-            session.add(wi)
+            for i, utid in enumerate(unit_type_ids):
+                qty = int(quantities[i]) if i < len(quantities) else 0
+                if qty <= 0:
+                    continue
+                ut = units.get(int(utid))
+                if not ut:
+                    continue
+                minutes_per = ut.default_minutes
+                total = qty * minutes_per
+                wi = WorkItem(
+                    project_id=p.id,
+                    unit_type_id=ut.id,
+                    title=ut.name,
+                    quantity=qty,
+                    minutes_per_unit=minutes_per,
+                    total_minutes=total,
+                )
+                session.add(wi)
 
         session.commit()
         return RedirectResponse(f"/projects/{p.id}", status_code=302)
@@ -1321,6 +1368,9 @@ def project_set_status(
         p = session.get(Project, project_id)
         if not p or p.company_id != company.id:
             raise HTTPException(404, "Project not found")
+
+        if int(getattr(p, "budget_minutes", 0) or 0) > 0:
+            return RedirectResponse(f"/projects/{p.id}?err=budget_mode_units", status_code=302)
 
         status = (status or "active").lower().strip()
         if status not in ("active", "closed"):
@@ -1348,6 +1398,9 @@ def project_delete(
         p = session.get(Project, project_id)
         if not p or p.company_id != company.id:
             raise HTTPException(404, "Project not found")
+
+        if int(getattr(p, "budget_minutes", 0) or 0) > 0:
+            return RedirectResponse(f"/projects/{p.id}?err=budget_mode_units", status_code=302)
 
         # Cascade delete related rows
         wis = session.exec(select(WorkItem).where(WorkItem.project_id == p.id)).all()
@@ -1391,6 +1444,9 @@ def project_units_view(request: Request, project_id: int, view: str = "week", re
         project = session.get(Project, project_id)
         if not project or project.company_id != company.id:
             raise HTTPException(404, "Project not found")
+
+        if int(getattr(project, "budget_minutes", 0) or 0) > 0:
+            return RedirectResponse(f"/projects/{project.id}?err=budget_mode_units", status_code=302)
         ref_d = _parse_ref(ref)
         if view in ("day", "week"):
             ref_d = _week_start(ref_d)
@@ -1538,6 +1594,10 @@ async def api_unit_alloc_create(request: Request):
         if not project or project.company_id != company.id:
             raise HTTPException(404, "Project not found")
 
+        # Budget projects do not use unit planning
+        if int(getattr(project, "budget_minutes", 0) or 0) > 0:
+            raise HTTPException(400, "Projektet är i budgetläge och kan inte planeras med enheter")
+
         wi = session.get(WorkItem, int(work_item_id))
         if not wi or wi.project_id != project.id:
             raise HTTPException(404, "WorkItem not found")
@@ -1556,12 +1616,16 @@ async def api_unit_alloc_create(request: Request):
         if minutes is None or int(minutes) <= 0:
             raise HTTPException(400, "Missing or invalid minutes")
 
+        # Snap unit planning to a single work-week bucket (Mon–Fri)
+        sd_raw = date.fromisoformat(str(start_date))
+        sd, ed = _week_bucket(sd_raw)
+
         ua = UnitAllocation(
             project_id=project.id,
             work_item_id=wi.id,
             person_id=person.id,
-            start_date=date.fromisoformat(str(start_date)),
-            end_date=date.fromisoformat(str(end_date)),
+            start_date=sd,
+            end_date=ed,
             minutes=int(minutes),
         )
         session.add(ua)
@@ -1618,12 +1682,23 @@ async def api_unit_alloc_update(request: Request, ua_id: int):
         if not project or project.company_id != company.id:
             raise HTTPException(403, "Forbidden")
 
+        # Budget projects do not use unit planning
+        if int(getattr(project, "budget_minutes", 0) or 0) > 0:
+            raise HTTPException(400, "Projektet är i budgetläge och kan inte planeras med enheter")
+
         wi = session.get(WorkItem, ua.work_item_id)
 
+        # Snap dates to a single work-week bucket (Mon–Fri)
+        base_d = None
         if start_date:
-            ua.start_date = date.fromisoformat(str(start_date))
-        if end_date:
-            ua.end_date = date.fromisoformat(str(end_date))
+            base_d = date.fromisoformat(str(start_date))
+        elif end_date:
+            base_d = date.fromisoformat(str(end_date))
+        else:
+            base_d = ua.start_date
+        sd, ed = _week_bucket(base_d)
+        ua.start_date = sd
+        ua.end_date = ed
 
         # Normalize minutes
         if minutes is None:
@@ -1682,6 +1757,9 @@ def project_detail(request: Request, project_id: int):
         if not p or p.company_id != company.id:
             raise HTTPException(404, "Project not found")
 
+        if int(getattr(p, "budget_minutes", 0) or 0) > 0:
+            return RedirectResponse(f"/projects/{p.id}?err=budget_mode_units", status_code=302)
+
         items = session.exec(select(WorkItem).where(WorkItem.project_id == p.id)).all()
         totals = _project_scope_planned(session, company.id, p.id)
 
@@ -1711,6 +1789,21 @@ def project_detail(request: Request, project_id: int):
                 cap_h += cap * (a.percent / 100.0)
             cap_rows.append({"label": per["label"], "hours": cap_h})
 
+        err = request.query_params.get("err", "")
+        msg = request.query_params.get("msg", "")
+        err_msg = ""
+        msg_txt = ""
+        if err == "budget_has_units":
+            err_msg = "Kan inte sätta budget när projektet har enheter. Ta bort alla enheter (och eventuell enhetsplanering) först."
+        elif err == "budget_mode_units":
+            err_msg = "Projektet är i budgetläge. Enheter/scope och enhetsplanering är avstängt för det här projektet."
+        elif err == "budget_invalid":
+            err_msg = "Ogiltig budget. Ange antal timmar (t.ex. 120)."
+        elif err == "budget_forbidden":
+            err_msg = "Du saknar behörighet att ändra budget."
+        if msg == "budget_updated":
+            msg_txt = "Budget uppdaterad."
+
         return templates.TemplateResponse(
             "project_detail.html",
             {
@@ -1728,8 +1821,51 @@ def project_detail(request: Request, project_id: int):
                 "unit_types": unit_types,
                 "can_manage": _is_planner_or_admin(session, company, user),
                 "is_admin": _is_admin(session, company, user),
+                "err_msg": err_msg,
+                "msg": msg_txt,
             },
         )
+
+
+@app.post("/projects/{project_id}/budget")
+def project_set_budget(
+    request: Request,
+    project_id: int,
+    budget_hours: str = Form(""),
+):
+    """Set/update project budget (in hours). Block switching to budget if the project has unit scope."""
+    with get_session() as session:
+        user = _get_active_user(session, request)
+        company = _get_active_company(session, request)
+        if not company:
+            return RedirectResponse("/setup", status_code=302)
+        if not _is_planner_or_admin(session, company, user):
+            return RedirectResponse(f"/projects/{project_id}?err=budget_forbidden", status_code=302)
+
+        p = session.get(Project, int(project_id))
+        if not p or p.company_id != company.id:
+            raise HTTPException(404, "Project not found")
+
+        raw = str(budget_hours or "").replace(",", ".").strip()
+        if raw == "":
+            minutes = 0
+        else:
+            try:
+                minutes = int(round(max(0.0, float(raw)) * 60))
+            except Exception:
+                return RedirectResponse(f"/projects/{p.id}?err=budget_invalid", status_code=302)
+
+        # If switching into budget mode (minutes > 0), require that the project has no unit scope.
+        if minutes > 0:
+            has_units = session.exec(select(WorkItem).where(WorkItem.project_id == p.id)).first() is not None
+            has_unit_plan = session.exec(select(UnitAllocation).where(UnitAllocation.project_id == p.id)).first() is not None
+            if has_units or has_unit_plan:
+                return RedirectResponse(f"/projects/{p.id}?err=budget_has_units", status_code=302)
+
+        p.budget_minutes = minutes
+        session.add(p)
+        session.commit()
+        return RedirectResponse(f"/projects/{p.id}?msg=budget_updated", status_code=302)
 
 @app.post("/projects/{project_id}/workitems/add")
 def project_workitem_add(
@@ -1750,6 +1886,9 @@ def project_workitem_add(
         p = session.get(Project, project_id)
         if not p or p.company_id != company.id:
             raise HTTPException(404, "Project not found")
+
+        if int(getattr(p, "budget_minutes", 0) or 0) > 0:
+            return RedirectResponse(f"/projects/{p.id}?err=budget_mode_units", status_code=302)
 
         ut = session.get(UnitType, int(unit_type_id))
         if not ut or ut.company_id != company.id:
@@ -1795,6 +1934,9 @@ def project_workitem_update(
         if not p or p.company_id != company.id:
             raise HTTPException(404, "Project not found")
 
+        if int(getattr(p, "budget_minutes", 0) or 0) > 0:
+            return RedirectResponse(f"/projects/{p.id}?err=budget_mode_units", status_code=302)
+
         wi = session.get(WorkItem, work_item_id)
         if not wi or wi.project_id != p.id:
             raise HTTPException(404, "WorkItem not found")
@@ -1824,6 +1966,9 @@ def project_workitem_delete(
         p = session.get(Project, project_id)
         if not p or p.company_id != company.id:
             raise HTTPException(404, "Project not found")
+
+        if int(getattr(p, "budget_minutes", 0) or 0) > 0:
+            return RedirectResponse(f"/projects/{p.id}?err=budget_mode_units", status_code=302)
 
         wi = session.get(WorkItem, work_item_id)
         if not wi or wi.project_id != p.id:

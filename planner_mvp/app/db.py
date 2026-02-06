@@ -59,6 +59,10 @@ def init_db() -> None:
 
                 # Project
                 conn.execute(text("ALTER TABLE IF EXISTS project ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'active'"))
+                conn.execute(text("ALTER TABLE IF EXISTS project ADD COLUMN IF NOT EXISTS budget_minutes INTEGER DEFAULT 0"))
+
+                # Company name must be unique (case-insensitive)
+                conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_company_name_lower ON company (lower(name))"))
 
                 # WorkItem
                 conn.execute(text("ALTER TABLE IF EXISTS workitem ADD COLUMN IF NOT EXISTS deadline TIMESTAMP"))

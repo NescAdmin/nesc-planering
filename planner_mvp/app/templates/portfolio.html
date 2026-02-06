@@ -77,12 +77,18 @@
                   {% else %}
                     <span class="proj-badge ok">{{"%.1f"|format((scope-planned)/60)}}h kvar</span>
                   {% endif %}
-                  <button class="chip-expand" type="button" title="Visa enheter" data-project-id="{{p.id}}">▾</button>
+                  {% if (p.budget_minutes or 0) == 0 and (proj_items.get(p.id, [])|length) > 0 %}
+                    <button class="chip-expand" type="button" title="Visa enheter" data-project-id="{{p.id}}">▾</button>
+                  {% endif %}
                 </div>
 
                 <div class="proj-details" data-proj-details="{{p.id}}" style="display:none">
                   <div class="proj-meta-full">
-                    Scope: {{"%.1f"|format(scope/60)}}h • Planerat: {{"%.1f"|format(planned/60)}}h •
+                    {% if (p.budget_minutes or 0) > 0 %}
+                      Budget: {{"%.1f"|format(scope/60)}}h • Planerat: {{"%.1f"|format(planned/60)}}h •
+                    {% else %}
+                      Scope: {{"%.1f"|format(scope/60)}}h • Planerat: {{"%.1f"|format(planned/60)}}h •
+                    {% endif %}
                     {% if over > 0 %}<span class="over">Överskridet: +{{"%.1f"|format(over/60)}}h</span>{% else %}<span class="ok">Kvar: {{"%.1f"|format((scope-planned)/60)}}h</span>{% endif %}
                   </div>
                 </div>

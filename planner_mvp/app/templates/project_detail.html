@@ -8,75 +8,137 @@
 <body>
 {% include "partials_topbar.html" %}
 <div class="container">
+  {% set is_budget = (project.budget_minutes or 0) > 0 %}
   <div class="pagehead">
     <div>
       <h1><span class="project-dot" style="background: {{project.color}}"></span> {{project.name}}</h1>
-      <div class="muted">Scope: <strong>{{"%.1f"|format(totals.scope/60)}}</strong> h · Planerat: <strong>{{"%.1f"|format(totals.planned/60)}}</strong> h{% if totals.over > 0 %} · <span class="danger">Överskridet: +{{"%.1f"|format(totals.over/60)}} h</span>{% endif %}. Resurslägg genom procent-allokering i Portföljvyn.</div>
+      <div class="muted">
+        {% if is_budget %}
+          Budget: <strong>{{"%.1f"|format((project.budget_minutes or 0)/60)}}</strong> h
+        {% else %}
+          Scope: <strong>{{"%.1f"|format(totals.scope/60)}}</strong> h
+        {% endif %}
+        · Planerat: <strong>{{"%.1f"|format(totals.planned/60)}}</strong> h
+        {% if totals.over > 0 %} · <span class="danger">Överskridet: +{{"%.1f"|format(totals.over/60)}} h</span>{% endif %}.
+        Resurslägg genom procent-allokering i Tidschemavyn.
+      </div>
     </div>
     <div class="pagehead-actions">
-      <a class="btn" href="/">Öppna i Portfölj</a>
+      <a class="btn" href="/">Öppna i Tidschema</a>
     </div>
   </div>
 
+  {% if msg %}<div class="alert ok" style="margin:10px 0;">{{msg}}</div>{% endif %}
+  {% if err_msg %}<div class="alert danger" style="margin:10px 0;">{{err_msg}}</div>{% endif %}
+
   <div class="grid2">
     <div class="card">
-      <h2>Scope (enheter × tid)</h2>
-      <table class="table">
-        <thead><tr><th>Enhet</th><th>Antal</th><th>Min/enhet</th><th>Totalt (h)</th></tr></thead>
-        <tbody>
-          {% for it in items %}
-            <tr>
-              <td>{{it.title}}</td>
-              <td>{{it.quantity}}</td>
-              <td>{{it.minutes_per_unit}}</td>
-              <td>{{"%.1f"|format(it.total_minutes/60)}}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+      {% if is_budget %}
+        <h2>Budget</h2>
+        <div class="muted">Budgetläge – följ projektet i timmar utan enheter.</div>
+        <div class="row" style="display:flex; gap:14px; flex-wrap:wrap; margin-top:10px;">
+          <div class="pill">Budget: <strong>{{"%.1f"|format((project.budget_minutes or 0)/60)}}</strong> h</div>
+          <div class="pill">Planerat: <strong>{{"%.1f"|format(totals.planned/60)}}</strong> h</div>
+          {% if totals.over > 0 %}
+            <div class="pill danger">Överskridet: +{{"%.1f"|format(totals.over/60)}} h</div>
+          {% else %}
+            <div class="pill ok">Kvar: {{"%.1f"|format((totals.scope - totals.planned)/60)}} h</div>
+          {% endif %}
+        </div>
 
-      {% if can_manage %}
-      <div class="sep"></div>
-      <h3>Ändra scope (enheter)</h3>
-      <div class="muted">Du kan lägga till, ändra eller ta bort enheter även efter att projektet har startat.</div>
-
-      <div class="list">
-        {% for it in items %}
-          <form class="row" method="post" action="/projects/{{project.id}}/workitems/{{it.id}}/update" style="display:grid; grid-template-columns: 1fr 120px 140px auto; gap:8px; align-items:center;">
-            <input name="title" value="{{it.title}}"/>
-            <input type="number" min="0" name="quantity" value="{{it.quantity}}"/>
-            <input type="number" min="0" name="minutes_per_unit" value="{{it.minutes_per_unit}}"/>
-            <div style="display:flex; gap:6px; justify-content:flex-end;">
-              <button class="btn mini" type="submit">Spara</button>
-              <button class="btn danger mini" type="submit" formaction="/projects/{{project.id}}/workitems/{{it.id}}/delete" onclick="return confirm('Ta bort enheten och all planering kopplad till den?');">Ta bort</button>
+        {% if can_manage %}
+          <div class="sep"></div>
+          <h3>Ändra budget</h3>
+          <form method="post" action="/projects/{{project.id}}/budget" class="row" style="display:grid; grid-template-columns: 180px 160px; gap:8px; align-items:end;">
+            <div>
+              <label>Budget (timmar)</label>
+              <input type="number" min="0" step="0.5" name="budget_hours" value="{{"%.1f"|format((project.budget_minutes or 0)/60)}}"/>
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <button class="btn" type="submit">Spara</button>
             </div>
           </form>
-        {% endfor %}
-      </div>
+          <div class="muted" style="margin-top:6px;">Vill du använda enheter i stället? Sätt budgeten till 0, spara, och lägg sedan till enheter under "Scope".</div>
+        {% endif %}
 
-      <h4 style="margin-top:12px;">Lägg till enhet</h4>
-      <form method="post" action="/projects/{{project.id}}/workitems/add" class="row" style="display:grid; grid-template-columns: 1fr 120px 140px 160px; gap:8px; align-items:end;">
-        <div>
-          <label>Enhetstyp</label>
-          <select name="unit_type_id">
-            {% for ut in unit_types %}
-              <option value="{{ut.id}}">{{ut.icon}} {{ut.name}}</option>
+      {% else %}
+        <h2>Scope (enheter × tid)</h2>
+        <table class="table">
+          <thead><tr><th>Enhet</th><th>Antal</th><th>Min/enhet</th><th>Totalt (h)</th></tr></thead>
+          <tbody>
+            {% for it in items %}
+              <tr>
+                <td>{{it.title}}</td>
+                <td>{{it.quantity}}</td>
+                <td>{{it.minutes_per_unit}}</td>
+                <td>{{"%.1f"|format(it.total_minutes/60)}}</td>
+              </tr>
             {% endfor %}
-          </select>
+          </tbody>
+        </table>
+
+        {% if can_manage %}
+        <div class="sep"></div>
+        <h3>Budget (valfritt)</h3>
+        {% if items|length == 0 %}
+          <form method="post" action="/projects/{{project.id}}/budget" class="row" style="display:grid; grid-template-columns: 180px 160px; gap:8px; align-items:end;">
+            <div>
+              <label>Budget (timmar)</label>
+              <input type="number" min="0" step="0.5" name="budget_hours" placeholder="120"/>
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <button class="btn" type="submit">Sätt budget</button>
+            </div>
+          </form>
+          <div class="muted" style="margin-top:6px;">Om du sätter budget stängs enheter av för projektet.</div>
+        {% else %}
+          <div class="muted">Budget kan bara sättas när projektet saknar enheter. Ta bort alla enheter i scope först.</div>
+        {% endif %}
+
+        <div class="sep"></div>
+        <h3>Ändra scope (enheter)</h3>
+        <div class="muted">Du kan lägga till, ändra eller ta bort enheter även efter att projektet har startat.</div>
+
+        <div class="list">
+          {% for it in items %}
+            <form class="row" method="post" action="/projects/{{project.id}}/workitems/{{it.id}}/update" style="display:grid; grid-template-columns: 1fr 120px 140px auto; gap:8px; align-items:center;">
+              <input name="title" value="{{it.title}}"/>
+              <input type="number" min="0" name="quantity" value="{{it.quantity}}"/>
+              <input type="number" min="0" name="minutes_per_unit" value="{{it.minutes_per_unit}}"/>
+              <div style="display:flex; gap:6px; justify-content:flex-end;">
+                <button class="btn mini" type="submit">Spara</button>
+                <button class="btn danger mini" type="submit" formaction="/projects/{{project.id}}/workitems/{{it.id}}/delete" onclick="return confirm('Ta bort enheten och all planering kopplad till den?');">Ta bort</button>
+              </div>
+            </form>
+          {% endfor %}
         </div>
-        <div>
-          <label>Antal</label>
-          <input type="number" min="1" name="quantity" value="1"/>
-        </div>
-        <div>
-          <label>Min/enhet (valfritt)</label>
-          <input type="number" min="0" name="minutes_per_unit" placeholder="(default)"/>
-        </div>
-        <div>
-          <label>&nbsp;</label>
-          <button class="btn" type="submit">Lägg till</button>
-        </div>
-      </form>
+
+        <h4 style="margin-top:12px;">Lägg till enhet</h4>
+        <form method="post" action="/projects/{{project.id}}/workitems/add" class="row" style="display:grid; grid-template-columns: 1fr 120px 140px 160px; gap:8px; align-items:end;">
+          <div>
+            <label>Enhetstyp</label>
+            <select name="unit_type_id">
+              {% for ut in unit_types %}
+                <option value="{{ut.id}}">{{ut.icon}} {{ut.name}}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label>Antal</label>
+            <input type="number" min="1" name="quantity" value="1"/>
+          </div>
+          <div>
+            <label>Min/enhet (valfritt)</label>
+            <input type="number" min="0" name="minutes_per_unit" placeholder="(default)"/>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button class="btn" type="submit">Lägg till</button>
+          </div>
+        </form>
+        {% endif %}
       {% endif %}
 
       <h3>Allokerad kapacitet (kommande veckor)</h3>
@@ -104,7 +166,7 @@
           </div>
         {% endfor %}
         {% if not allocs %}
-          <div class="muted">Inga allokeringar ännu. Gå till Portföljvyn och dra projektet till en person.</div>
+          <div class="muted">Inga allokeringar ännu. Gå till Tidschemavyn och dra projektet till en person.</div>
         {% endif %}
       </div>
 <h2>Kommentarer</h2>
