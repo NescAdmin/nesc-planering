@@ -303,7 +303,8 @@ textarea { resize: vertical; }
 .pt-row {
   position:relative;
   border-bottom:1px solid #eef2f7;
-  min-height: calc((var(--pt-lanes, 1) * 26px) + 18px);
+  /* Reserve height for both allocation lanes (bars) and unit-tags (enhetsplanering) */
+  min-height: calc((var(--pt-lanes, 1) * 26px) + (var(--pt-unitlines, 0) * 34px) + 28px);
   background:#fff;
 }
 .pt-bg {
@@ -320,6 +321,25 @@ textarea { resize: vertical; }
   gap:6px;
   padding:10px; align-content:start;
 }
+
+/* Unit tags (time-based planning of workitems) are rendered in their own overlay layer
+   so they never get hidden behind allocation bars. */
+.pt-units{
+  position:absolute;
+  inset:0;
+  z-index:3;
+  display:grid;
+  align-content:start;
+  pointer-events:none; /* let drops/bars work; unit-tags opt-in to events */
+}
+.pt-unitcell{
+  padding: calc((var(--pt-lanes, 1) * 26px) + 18px) 8px 8px;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  min-width:0;
+}
+.pt-units .unit-tag{ pointer-events:auto; }
 
 /* Allow bars to be interactive even when the bars-layer is transparent to clicks */
 .pt-alloc { pointer-events:auto; }

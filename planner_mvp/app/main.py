@@ -28,7 +28,7 @@ from .models import (
 )
 
 APP_NAME = "NESC Planering"
-APP_VERSION = "v4.4.12"
+APP_VERSION = "v4.4.15"
 
 app = FastAPI(title=APP_NAME)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -163,6 +163,22 @@ def _ms_configured() -> bool:
     if os.environ.get("AUTH_PROVIDER", "").lower() != "azuread":
         return False
     return bool(os.environ.get("AZURE_CLIENT_ID") and os.environ.get("AZURE_CLIENT_SECRET"))
+
+
+def _manual_login_enabled() -> bool:
+    """Whether the "Admin/felsök" manual user-picker login is enabled.
+
+    Manual login is a legacy/diagnostic fallback and is a security risk in production.
+
+    Rules:
+    - If AUTH_PROVIDER=azuread (Microsoft Entra ID): OFF by default. Enable only with ALLOW_MANUAL_LOGIN=1.
+    - Otherwise (local/legacy login mode): ON.
+    """
+    provider = (os.environ.get("AUTH_PROVIDER") or "").strip().lower()
+    if provider == "azuread":
+        flag = (os.environ.get("ALLOW_MANUAL_LOGIN") or "").strip().lower()
+        return flag in ("1", "true", "yes", "on")
+    return True
 
 
 def _public_base_url(request: Request) -> str:
@@ -733,9 +749,7 @@ def login_get(request: Request):
     with get_session() as session:
         company = session.exec(select(Company)).first()
         if not company:
-            # No company yet: send user to setup and prefill admin fields.
-            request.session["setup_prefill_name"] = name or (email.split("@")[0] if email else "")
-            request.session["setup_prefill_email"] = email
+            # No company yet: go to setup. (Microsoft callback can prefill admin fields.)
             return RedirectResponse("/setup", status_code=302)
 
         next_url = request.query_params.get("next", "") or ""
@@ -750,6 +764,7 @@ def login_get(request: Request):
         users = sorted(users, key=lambda u: (u.name or u.email or ""))
         ms_provider_requested = os.environ.get("AUTH_PROVIDER", "").lower() == "azuread"
         ms_configured = _ms_configured()
+        manual_login_enabled = _manual_login_enabled()
 
         return templates.TemplateResponse(
             "login.html",
@@ -762,6 +777,7 @@ def login_get(request: Request):
                 "app_version": APP_VERSION,
                 "ms_provider_requested": ms_provider_requested,
                 "ms_configured": ms_configured,
+                "manual_login_enabled": manual_login_enabled,
                 "active_user": None,
             },
         )
@@ -769,6 +785,11 @@ def login_get(request: Request):
 
 @app.post("/login")
 def login_post(request: Request, user_id: int = Form(...), next: str = Form("")):
+    # Manual login (user picker) is a legacy/diagnostic fallback.
+    # When Azure AD is configured, it must be disabled by default to prevent impersonation.
+    if not _manual_login_enabled():
+        raise HTTPException(403, "Manuell inloggning är avstängd. Logga in med Microsoft.")
+
     with get_session() as session:
         u = session.get(User, int(user_id))
         if not u:
@@ -1369,9 +1390,6 @@ def project_set_status(
         if not p or p.company_id != company.id:
             raise HTTPException(404, "Project not found")
 
-        if int(getattr(p, "budget_minutes", 0) or 0) > 0:
-            return RedirectResponse(f"/projects/{p.id}?err=budget_mode_units", status_code=302)
-
         status = (status or "active").lower().strip()
         if status not in ("active", "closed"):
             raise HTTPException(400, "Invalid status")
@@ -1398,9 +1416,6 @@ def project_delete(
         p = session.get(Project, project_id)
         if not p or p.company_id != company.id:
             raise HTTPException(404, "Project not found")
-
-        if int(getattr(p, "budget_minutes", 0) or 0) > 0:
-            return RedirectResponse(f"/projects/{p.id}?err=budget_mode_units", status_code=302)
 
         # Cascade delete related rows
         wis = session.exec(select(WorkItem).where(WorkItem.project_id == p.id)).all()
@@ -1756,9 +1771,6 @@ def project_detail(request: Request, project_id: int):
         p = session.get(Project, project_id)
         if not p or p.company_id != company.id:
             raise HTTPException(404, "Project not found")
-
-        if int(getattr(p, "budget_minutes", 0) or 0) > 0:
-            return RedirectResponse(f"/projects/{p.id}?err=budget_mode_units", status_code=302)
 
         items = session.exec(select(WorkItem).where(WorkItem.project_id == p.id)).all()
         totals = _project_scope_planned(session, company.id, p.id)
@@ -2215,6 +2227,15 @@ def portfolio_view(request: Request, view: str = "week", ref: Optional[str] = No
                     }
                 )
 
+        # For each person row, compute how many unit-tags are shown at most in a single cell.
+        # Used to reserve row height so tags never end up hidden behind other layers.
+        timeline_unitlines: Dict[int, int] = {}
+        for pe in people:
+            mx = 0
+            for pi in range(len(periods)):
+                mx = max(mx, len(cell_unit_tags.get((pe.id, pi), [])))
+            timeline_unitlines[pe.id] = mx
+
         # Timeline segments: combine project allocations + adhoc allocations (bars)
         timeline_segments: Dict[int, List[Dict]] = {}
         timeline_lanes: Dict[int, int] = {}
@@ -2372,6 +2393,7 @@ def portfolio_view(request: Request, view: str = "week", ref: Optional[str] = No
                 "off_cells": off_cells,
                 "timeline_segments": timeline_segments,
                 "timeline_lanes": timeline_lanes,
+                "timeline_unitlines": timeline_unitlines,
                 "cell_unit_tags": cell_unit_tags,
             },
         )
