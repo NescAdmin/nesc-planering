@@ -486,6 +486,20 @@ async function deleteAlloc(allocId) {
         if (await deleteUnitAlloc(id)) window.location.reload();
       });
 
+      // Explicit delete button (works on touch devices where right-click doesn't exist)
+      const delBtn = tag.querySelector(".unit-del");
+      if (delBtn) {
+        delBtn.addEventListener("click", async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const id = tag.getAttribute("data-unitalloc-id");
+          if (!id) return;
+          if (!confirm("Ta bort enhetsplaneringen?")) return;
+          if (await deleteUnitAlloc(id)) window.location.reload();
+        });
+        delBtn.addEventListener("dragstart", (e) => e.preventDefault());
+      }
+
       tag.addEventListener("contextmenu", (e) => {
         e.preventDefault();
         e.stopPropagation();

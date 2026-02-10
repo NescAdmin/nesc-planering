@@ -60,6 +60,14 @@
             </div>
           </form>
           <div class="muted" style="margin-top:6px;">Vill du använda enheter i stället? Sätt budgeten till 0, spara, och lägg sedan till enheter under "Scope".</div>
+
+          <div style="margin-top:10px;">
+            <form method="post" action="/projects/{{project.id}}/budget" onsubmit="return confirm('Byt projektet från budgetläge till enheter? All planering i tidschemat ligger kvar.');">
+              <input type="hidden" name="budget_hours" value="0"/>
+              <button class="btn" type="submit">Byt till enheter</button>
+            </form>
+            <div class="muted" style="margin-top:6px;">Efter bytet kan du lägga till enheter (scope) i projektet.</div>
+          </div>
         {% endif %}
 
       {% else %}

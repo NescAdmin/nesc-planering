@@ -28,7 +28,7 @@ from .models import (
 )
 
 APP_NAME = "NESC Planering"
-APP_VERSION = "v4.4.15"
+APP_VERSION = "v4.4.16"
 
 app = FastAPI(title=APP_NAME)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -49,6 +49,51 @@ def _dm(val):
 
 templates.env.filters["dm"] = _dm
 templates.env.filters["urlencode"] = lambda v: quote(str(v))
+
+# Color helpers for readable text on project-colored badges
+def _hex_to_rgb(s: str) -> Optional[Tuple[int, int, int]]:
+    if not s:
+        return None
+    s = str(s).strip()
+    if s.startswith("#"):
+        h = s[1:]
+        if len(h) == 3:
+            h = "".join([c * 2 for c in h])
+        if len(h) == 6:
+            try:
+                r = int(h[0:2], 16)
+                g = int(h[2:4], 16)
+                b = int(h[4:6], 16)
+                return (r, g, b)
+            except Exception:
+                return None
+    return None
+
+
+def _rel_lum(rgb: Tuple[int, int, int]) -> float:
+    # https://www.w3.org/TR/WCAG20/#relativeluminancedef
+    def _srgb(c: float) -> float:
+        c = c / 255.0
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = rgb
+    return 0.2126 * _srgb(r) + 0.7152 * _srgb(g) + 0.0722 * _srgb(b)
+
+
+def _contrast_fg(color: str) -> str:
+    rgb = _hex_to_rgb(color)
+    if not rgb:
+        return "#0f172a"
+    # threshold tuned for UI badges
+    return "#ffffff" if _rel_lum(rgb) < 0.55 else "#0f172a"
+
+
+def _contrast_pill_bg(color: str) -> str:
+    fg = _contrast_fg(color)
+    return "rgba(255,255,255,.25)" if fg == "#ffffff" else "rgba(0,0,0,.06)"
+
+
+templates.env.filters["contrast_fg"] = _contrast_fg
+templates.env.filters["contrast_pill_bg"] = _contrast_pill_bg
 
 # -------------------------
 # Safe parsing helpers (defensive against legacy DB rows with NULLs)

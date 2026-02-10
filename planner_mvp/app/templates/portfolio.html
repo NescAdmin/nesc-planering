@@ -183,6 +183,10 @@
                   <div class="pt-unitcell">
                     {% for tag in cell_unit_tags.get((person.id, pi), []) %}
                       {% set proj = projects_by_id.get(tag.project_id) %}
+                      {% set bg = (proj.color if proj else '#f8fafc') %}
+                      {% set border = (proj.color if proj else '#94a3b8') %}
+                      {% set fg = bg|contrast_fg %}
+                      {% set pillbg = bg|contrast_pill_bg %}
                       {% set h = ("%.1f"|format((tag.minutes or 0)/60))|replace('.0','') %}
                       <div class="unit-tag" draggable="true"
                            data-unitalloc-id="{{tag.id}}"
@@ -191,9 +195,10 @@
                            data-ua-start="{{tag.ua_start}}"
                            data-ua-end="{{tag.ua_end}}"
                            data-ua-total-minutes="{{tag.ua_minutes}}"
-                           style="border-left: 6px solid {{proj.color if proj else '#94a3b8'}}">
+                           style="--unit-bg: {{bg}}; --unit-fg: {{fg}}; --unit-pill-bg: {{pillbg}}; border-left: 6px solid {{border}};">
                         <span class="unit-label">{{ (proj.name if proj else ("Projekt " ~ tag.project_id)) ~ " - " ~ (tag.title or "") ~ " " ~ h ~ "h" }}</span>
                         <span class="unit-hours">{{h}}h</span>
+                        <button class="unit-del" type="button" title="Ta bort">×</button>
                         <span class="u-resize" title="Dra för att ändra timmar">⠿</span>
                       </div>
                     {% endfor %}
