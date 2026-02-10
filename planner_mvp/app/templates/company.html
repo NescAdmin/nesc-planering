@@ -20,6 +20,11 @@
       Kan inte ta bort enheten: den används i ett eller flera projekt (scope-rader).
     </div>
   {% endif %}
+  {% if err == "self_lock" %}
+    <div class="badge danger" style="margin: 8px 0 14px 0;">
+      Du kan inte sätta dig själv till pending/disabled (risk för att låsa ute admin).
+    </div>
+  {% endif %}
 
   <div class="grid2">
     <div class="card">
@@ -30,15 +35,32 @@
           {% set u = users.get(m.user_id) %}
           <div class="row" style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
             <div>
-              <div><strong>{{ u.name if u else ("User "+m.user_id|string) }}</strong> <span class="muted">({{m.role_in_company}})</span></div>
+              <div><strong>{{ u.name if u else ("User "+m.user_id|string) }}</strong> <span class="muted">({{m.role_in_company}} • {{m.status if m.status else "active"}})</span></div>
               <div class="muted">{{ u.email if u else "" }}</div>
             </div>
 
             {% if is_admin %}
-              <form method="post" action="/company/members/{{m.id}}/delete"
-                    onsubmit="return confirm('Ta bort personen? Detta tar bort personens planering, frånvaro och allokeringar i företaget.');">
-                <button class="btn danger mini" type="submit">Ta bort</button>
-              </form>
+              <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+                <form method="post" action="/company/members/{{m.id}}/update" style="display:flex; gap:8px; align-items:center;">
+                  <select name="role_in_company" style="min-width:120px;">
+                    <option value="employee" {{'selected' if m.role_in_company=='employee' else ''}}>employee</option>
+                    <option value="planner" {{'selected' if m.role_in_company=='planner' else ''}}>planner</option>
+                    <option value="admin" {{'selected' if m.role_in_company=='admin' else ''}}>admin</option>
+                    <option value="external" {{'selected' if m.role_in_company=='external' else ''}}>external</option>
+                  </select>
+                  <select name="status" style="min-width:120px;">
+                    {% set st = (m.status if m.status else 'active') %}
+                    <option value="active" {{'selected' if st=='active' else ''}}>active</option>
+                    <option value="pending" {{'selected' if st=='pending' else ''}}>pending</option>
+                    <option value="disabled" {{'selected' if st=='disabled' else ''}}>disabled</option>
+                  </select>
+                  <button class="btn mini" type="submit">Spara</button>
+                </form>
+                <form method="post" action="/company/members/{{m.id}}/delete"
+                      onsubmit="return confirm('Ta bort personen? Detta tar bort personens planering, frånvaro och allokeringar i företaget.');">
+                  <button class="btn danger mini" type="submit">Ta bort</button>
+                </form>
+              </div>
             {% endif %}
           </div>
         {% endfor %}

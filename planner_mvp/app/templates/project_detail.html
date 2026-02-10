@@ -23,7 +23,13 @@
         Resurslägg genom procent-allokering i Tidschemavyn.
       </div>
     </div>
-    <div class="pagehead-actions">
+    <div class="pagehead-actions" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end;">
+      {% if can_manage %}
+        <form method="post" action="/projects/{{project.id}}/rename" style="display:flex; gap:6px; align-items:center;">
+          <input name="name" value="{{project.name}}" style="width:220px;"/>
+          <button class="btn mini" type="submit">Byt namn</button>
+        </form>
+      {% endif %}
       <a class="btn" href="/">Öppna i Tidschema</a>
     </div>
   </div>

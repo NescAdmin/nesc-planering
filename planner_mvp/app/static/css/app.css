@@ -587,13 +587,13 @@ textarea { resize: vertical; }
 .wi-over{ color:#991b1b; font-weight:900; }
 
 .unit-tag{
-  padding:6px 8px;
+  padding:4px 6px;
   border:1px solid #e5e7eb;
-  border-radius:12px;
+  border-radius:10px;
   background: var(--unit-bg, #fff);
   color: var(--unit-fg, #0f172a);
   font-weight:900;
-  font-size:12px;
+  font-size:11px;
   cursor:grab;
   user-select:none;
   box-shadow: 0 1px 2px rgba(0,0,0,.05);
@@ -627,22 +627,22 @@ textarea { resize: vertical; }
 .chip-sub{font-size:12px; line-height:1.2;}
 /* Unit tag layout + resize grip */
 .unit-tag{display:flex; align-items:center; gap:6px;}
-.unit-label{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-.unit-hours{font-weight:700; font-size:12px; padding:2px 6px; border-radius:999px; background:var(--unit-pill-bg, rgba(0,0,0,.05)); cursor:pointer;}
+.unit-label{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:800;}
+.unit-hours{font-weight:700; font-size:11px; padding:1px 5px; border-radius:999px; background:var(--unit-pill-bg, rgba(0,0,0,.05)); cursor:pointer;}
 .unit-del{
   border:0;
   background: transparent;
   color: inherit;
   font-weight: 900;
-  width: 22px;
-  height: 22px;
-  line-height: 22px;
+  width: 18px;
+  height: 18px;
+  line-height: 18px;
   border-radius: 999px;
   cursor: pointer;
   opacity: .75;
 }
 .unit-del:hover{ opacity: 1; background: rgba(255,255,255,.18); }
-.u-resize{cursor:ew-resize; user-select:none; padding:0 6px; opacity:.75; touch-action:none;}
+.u-resize{cursor:ew-resize; user-select:none; padding:0 4px; opacity:.75; touch-action:none;}
 .u-resize:hover{opacity:1;}
 .noselect{user-select:none;}
 

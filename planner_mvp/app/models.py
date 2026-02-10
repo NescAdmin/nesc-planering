@@ -27,6 +27,7 @@ class CompanyMember(SQLModel, table=True):
     company_id: int = Field(index=True)
     user_id: int = Field(index=True)
     role_in_company: str = "employee"  # admin|planner|employee|external
+    status: str = "active"  # active|pending|disabled
 
 
 class Person(SQLModel, table=True):

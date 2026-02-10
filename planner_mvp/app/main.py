@@ -28,7 +28,7 @@ from .models import (
 )
 
 APP_NAME = "NESC Planering"
-APP_VERSION = "v4.4.16"
+APP_VERSION = ""  # internal build id removed from UI
 
 app = FastAPI(title=APP_NAME)
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -352,6 +352,70 @@ def _get_active_user(session, request: Request) -> User:
     return u
 
 
+
+
+
+
+
+# --- Membership helpers (status gate) ---
+
+def _get_company_member(session, company_id: int, user_id: int):
+    return session.exec(
+        select(CompanyMember).where(
+            CompanyMember.company_id == company_id,
+            CompanyMember.user_id == user_id,
+        )
+    ).first()
+
+
+def _member_status(mem) -> str:
+    st = (getattr(mem, "status", None) if mem else None) or "active"
+    st = str(st).lower().strip()
+    return st if st in ("active", "pending", "disabled") else "active"
+
+
+@app.middleware("http")
+async def _member_status_gate(request: Request, call_next):
+    path = request.url.path
+    # Public paths
+    if path.startswith("/static/") or path.startswith("/auth/microsoft"):
+        return await call_next(request)
+    if path in ("/login", "/setup", "/logout", "/pending"): 
+        return await call_next(request)
+    if path in ("/favicon.ico",):
+        return await call_next(request)
+
+    try:
+        uid = request.session.get("uid")
+    except Exception:
+        uid = None
+    if not uid:
+        return await call_next(request)
+
+    try:
+        uid_i = int(uid)
+    except Exception:
+        return await call_next(request)
+
+    with get_session() as session:
+        company = session.exec(select(Company)).first()
+        if not company:
+            return await call_next(request)
+        mem = _get_company_member(session, company.id, uid_i)
+        status = _member_status(mem) if mem else "pending"
+        u = session.get(User, uid_i)
+        is_admin = False
+        if u and u.role == "admin":
+            is_admin = True
+        if mem and mem.role_in_company == "admin":
+            is_admin = True
+        if status != "active" and not is_admin:
+            if path.startswith("/api/"):
+                return JSONResponse(status_code=403, content={"error": "member_inactive", "status": status})
+            if path != "/pending":
+                return RedirectResponse("/pending", status_code=302)
+
+    return await call_next(request)
 
 
 def _company_member_role(session, company_id: int, user_id: int) -> str:
@@ -978,7 +1042,10 @@ def ms_login_callback(
         ).first()
         if not mem:
             role_in_company = "admin" if u.role == "admin" else ("planner" if u.role == "planner" else "employee")
-            session.add(CompanyMember(company_id=company.id, user_id=u.id, role_in_company=role_in_company))
+            status = "active" if role_in_company == "admin" else "pending"
+            session.add(CompanyMember(company_id=company.id, user_id=u.id, role_in_company=role_in_company, status=status))
+            # Create planning resource unless external. We allow pending/disabled members to exist as people
+            # so admins can plan for them, but they cannot access the app until activated.
             if u.role != "external":
                 session.add(
                     Person(
@@ -990,6 +1057,13 @@ def ms_login_callback(
                     )
                 )
             session.commit()
+        else:
+            # Backward compatible default
+            if not getattr(mem, "status", None):
+                mem.status = "active"
+                session.add(mem)
+                session.commit()
+
 
         # Logged in
         request.session["uid"] = u.id
@@ -1012,6 +1086,34 @@ def logout(request: Request):
         return RedirectResponse(url, status_code=302)
 
     return RedirectResponse("/login", status_code=302)
+
+
+@app.get("/pending", response_class=HTMLResponse)
+def pending_view(request: Request):
+    """Shown when a user is a member but not yet activated (pending/disabled)."""
+    with get_session() as session:
+        company = session.exec(select(Company)).first()
+        active_user = None
+        status = ""
+        try:
+            if request.session.get("uid"):
+                active_user = _get_active_user(session, request)
+        except Exception:
+            active_user = None
+
+        if company and active_user:
+            mem = _get_company_member(session, company.id, active_user.id)
+            status = _member_status(mem) if mem else "pending"
+
+        return templates.TemplateResponse(
+            "pending.html",
+            {
+                "request": request,
+                "company": company,
+                "active_user": active_user,
+                "status": status,
+            },
+        )
 
 
 @app.get("/company", response_class=HTMLResponse)
@@ -1152,6 +1254,63 @@ def company_members_add(
                 p = Person(
                     company_id=company.id,
                     user_id=u.id,
+                    work_start=_safe_hhmm(getattr(company, "work_start", None), "08:00"),
+                    work_end=_safe_hhmm(getattr(company, "work_end", None), "17:00"),
+                    work_days=_safe_workdays(getattr(company, "work_days", None)),
+                )
+                session.add(p)
+
+        session.commit()
+        return RedirectResponse("/company", status_code=302)
+
+
+@app.post("/company/members/{member_id}/update")
+def company_members_update(
+    request: Request,
+    member_id: int,
+    role_in_company: str = Form("employee"),
+    status: str = Form("active"),
+):
+    with get_session() as session:
+        active = _get_active_user(session, request)
+        company = _get_active_company(session, request)
+        if not company:
+            return RedirectResponse("/setup", status_code=302)
+
+        _require_admin(session, company, active)
+
+        mem = session.get(CompanyMember, int(member_id))
+        if not mem or mem.company_id != company.id:
+            raise HTTPException(404, "Member not found")
+
+        role_in_company = (role_in_company or "employee").strip().lower()
+        if role_in_company not in ("admin", "planner", "employee", "external"):
+            role_in_company = "employee"
+
+        status = (status or "active").strip().lower()
+        if status not in ("active", "pending", "disabled"):
+            status = "active"
+
+        # Prevent self-lockout: do not allow an admin to set themselves to pending/disabled
+        if mem.user_id == active.id and status != "active":
+            return RedirectResponse("/company?err=self_lock", status_code=302)
+
+        mem.role_in_company = role_in_company
+        mem.status = status
+
+        # Keep User.role roughly in sync (single-company MVP)
+        u = session.get(User, int(mem.user_id))
+        if u:
+            u.role = role_in_company
+
+        # NOTE: We do NOT delete planning data when changing status/role.
+        # If a member is active and not external, ensure they have a Person row.
+        if role_in_company != "external":
+            p = session.exec(select(Person).where(Person.company_id == company.id, Person.user_id == mem.user_id)).first()
+            if not p:
+                p = Person(
+                    company_id=company.id,
+                    user_id=mem.user_id,
                     work_start=_safe_hhmm(getattr(company, "work_start", None), "08:00"),
                     work_end=_safe_hhmm(getattr(company, "work_end", None), "17:00"),
                     work_days=_safe_workdays(getattr(company, "work_days", None)),
@@ -1805,6 +1964,29 @@ def api_unit_alloc_delete(request: Request, ua_id: int):
         return {"ok": True}
 
 
+@app.post("/projects/{project_id}/rename")
+def project_rename(request: Request, project_id: int, name: str = Form(...)):
+    with get_session() as session:
+        user = _get_active_user(session, request)
+        company = _get_active_company(session, request)
+        if not company:
+            return RedirectResponse("/setup", status_code=302)
+
+        _require_planner_or_admin(session, company, user)
+
+        p = session.get(Project, int(project_id))
+        if not p or p.company_id != company.id:
+            raise HTTPException(404, "Project not found")
+
+        nm = (name or "").strip()
+        if not nm:
+            return RedirectResponse(f"/projects/{project_id}", status_code=302)
+        p.name = nm
+        session.add(p)
+        session.commit()
+        return RedirectResponse(f"/projects/{project_id}?msg=renamed", status_code=302)
+
+
 @app.get("/projects/{project_id}", response_class=HTMLResponse)
 def project_detail(request: Request, project_id: int):
     with get_session() as session:
@@ -1860,6 +2042,8 @@ def project_detail(request: Request, project_id: int):
             err_msg = "Du saknar behörighet att ändra budget."
         if msg == "budget_updated":
             msg_txt = "Budget uppdaterad."
+        elif msg == "renamed":
+            msg_txt = "Projektnamn uppdaterat."
 
         return templates.TemplateResponse(
             "project_detail.html",

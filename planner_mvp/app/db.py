@@ -51,6 +51,7 @@ def init_db() -> None:
 
                 # CompanyMember
                 conn.execute(text("ALTER TABLE IF EXISTS companymember ADD COLUMN IF NOT EXISTS role_in_company VARCHAR DEFAULT 'employee'"))
+                conn.execute(text("ALTER TABLE IF EXISTS companymember ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'active'"))
 
                 # Person
                 conn.execute(text("ALTER TABLE IF EXISTS person ADD COLUMN IF NOT EXISTS work_start VARCHAR DEFAULT '08:00'"))
@@ -72,6 +73,18 @@ def init_db() -> None:
 
                 # UnitAllocation
                 conn.execute(text("ALTER TABLE IF EXISTS unitallocation ADD COLUMN IF NOT EXISTS minutes INTEGER DEFAULT 0"))
+
+        # SQLite: lightweight migrations (no IF NOT EXISTS for columns)
+        if engine.url.get_backend_name().startswith("sqlite"):
+            with engine.begin() as conn:
+                try:
+                    cols = [r[1] for r in conn.execute(text("PRAGMA table_info(companymember)")).fetchall()]
+                    if "role_in_company" not in cols:
+                        conn.execute(text("ALTER TABLE companymember ADD COLUMN role_in_company TEXT DEFAULT 'employee'"))
+                    if "status" not in cols:
+                        conn.execute(text("ALTER TABLE companymember ADD COLUMN status TEXT DEFAULT 'active'"))
+                except Exception:
+                    pass
     except Exception:
         # Never block startup due to a migration step; we'll surface errors in logs.
         return

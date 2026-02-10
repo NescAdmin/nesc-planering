@@ -196,7 +196,7 @@
                            data-ua-end="{{tag.ua_end}}"
                            data-ua-total-minutes="{{tag.ua_minutes}}"
                            style="--unit-bg: {{bg}}; --unit-fg: {{fg}}; --unit-pill-bg: {{pillbg}}; border-left: 6px solid {{border}};">
-                        <span class="unit-label">{{ (proj.name if proj else ("Projekt " ~ tag.project_id)) ~ " - " ~ (tag.title or "") ~ " " ~ h ~ "h" }}</span>
+                        <span class="unit-label">{{ (proj.name if proj else ("Projekt " ~ tag.project_id)) ~ " - " ~ (tag.title or "") }}</span>
                         <span class="unit-hours">{{h}}h</span>
                         <button class="unit-del" type="button" title="Ta bort">×</button>
                         <span class="u-resize" title="Dra för att ändra timmar">⠿</span>
@@ -290,14 +290,10 @@
   const panel = document.getElementById('projectsPanel');
   if(!btn || !panel) return;
   const count = parseInt(btn.getAttribute('data-count') || '0', 10);
-  const threshold = 8;
   function setLabel(collapsed){
     btn.textContent = (collapsed ? `Visa (${count})` : `Dölj (${count})`);
   }
-  if(count > threshold){
-    panel.classList.add('collapsed');
-    setLabel(true);
-  }
+  setLabel(false);
   btn.addEventListener('click', () => {
     const collapsed = panel.classList.toggle('collapsed');
     setLabel(collapsed);
